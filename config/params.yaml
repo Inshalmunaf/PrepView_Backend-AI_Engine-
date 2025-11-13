@@ -1,0 +1,14 @@
+# Model Parameters
+models:
+  stt_model_name: "openai/whisper-base"
+  sentiment_model_name: "distilbert-base-uncased-finetuned-sst-2-english"
+
+# Scoring Engine Thresholds
+scoring:
+  gaze:
+    good_threshold: 80  # (Percentage)
+    avg_threshold: 60
+  filler_words:
+    good_threshold: 3   # (Count)
+    avg_threshold: 8
+    

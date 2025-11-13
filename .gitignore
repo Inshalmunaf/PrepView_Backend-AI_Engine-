@@ -1,0 +1,19 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Virtual Environment
+venv/
+env/
+.venv/
+
+# Artifacts & Logs (Jo hamnay config mai banaye)
+artifacts/
+logs/
+
+# IDE settings
+.idea/
+.vscode/
+
+# Hamari Secret File (Sab se zaroori)
+.env

@@ -1,0 +1,9 @@
+# Temporary storage paths
+artifacts_root: artifacts
+temp_video_path: temp_uploads
+
+# Database connection
+database:
+  db_type: "postgresql"
+# db_user, db_password, db_host, db_port, db_name 
+  # ab .env file say ayen gay.
