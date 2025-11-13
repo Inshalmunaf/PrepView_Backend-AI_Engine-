@@ -1,5 +1,7 @@
 from prepview_engine.config.configuration import ConfigurationManager
 from prepview_engine.utils.common import logger
+from prepview_engine.components.preprocessing import PreprocessingComponent
+import os 
 
 def test_configuration():
     """
@@ -45,5 +47,52 @@ def test_configuration():
         logger.error(f"Configuration test FAILED: {e}")
         logger.exception(e) # Ye poora error traceback print karay ga
 
+def test_preprocessing():
+    """
+    Tests the PreprocessingComponent.
+    """
+    logger.info("--- Starting Preprocessing Component Test ---")
+    
+    try:
+        # 1. Config load karain
+        config_manager = ConfigurationManager()
+        pre_config = config_manager.get_preprocessing_config()
+        
+        # 2. Aik dummy video file ka path banayen
+        # (ASSUMPTION: Aapnay 'test_video.mp4' naam ki file
+        # 'artifacts/temp_uploads/' folder mai rakh di hai)
+        dummy_video_path = os.path.join(pre_config.temp_video_path, "test_video.mp4")
+        
+        # Check karain kay dummy file mojood hai
+        if not os.path.exists(dummy_video_path):
+            logger.warning(f"Test file not found at: {dummy_video_path}")
+            logger.warning("Please place a 'test_video.mp4' file in 'artifacts/temp_uploads/' to run this test.")
+            return
+
+        # 3. Component ko initialize karain
+        preprocessor = PreprocessingComponent(
+            original_video_path=dummy_video_path,
+            config=pre_config
+        )
+        
+        # 4. Component ko run karain
+        video_path, audio_path = preprocessor.run()
+        
+        # 5. Results check karain
+        logger.info(f"Original video path returned: {video_path}")
+        logger.info(f"Extracted audio path returned: {audio_path}")
+        
+        if os.path.exists(audio_path):
+            logger.info("SUCCESS: Audio file was created successfully.")
+        else:
+            logger.error("FAILURE: Audio file was NOT created.")
+            
+        logger.info("--- Finished Preprocessing Component Test ---")
+
+    except Exception as e:
+        logger.error(f"Preprocessing test FAILED: {e}")
+        logger.exception(e)
+
 if __name__ == "__main__":
-    test_configuration()
+    #test_configuration()
+    test_preprocessing()

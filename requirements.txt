@@ -7,3 +7,5 @@ python-box
 psycopg2-binary
 SQLAlchemy
 python-dotenv
+moviepy
+opencv-python-headless
