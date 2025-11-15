@@ -6,7 +6,8 @@ from prepview_engine.components.cv_analyzer import CVAnalyzerComponent
 from prepview_engine.components.nlp_analyzer import NLPAnalyzerComponent
 from prepview_engine.database.db_connector import DatabaseConnector
 from prepview_engine.components.report_generator import ReportGeneratorComponent
-
+from prepview_engine.pipeline.analysis_pipeline import AnalysisPipeline
+import uuid
 from pathlib import Path
 
 def test_configuration():
@@ -237,10 +238,51 @@ def test_report_generator():
         logger.exception(e)
 
 
+def test_full_analysis_pipeline():
+    """
+    Tests the full AnalysisPipeline from video-in to database-out.
+    """
+    logger.info("--- Starting FULL End-to-End Pipeline Test ---")
+    
+    try:
+        # 1. Config load karain (sirf path k liye)
+        config_manager = ConfigurationManager()
+        pre_config = config_manager.get_preprocessing_config()
+        
+        # 2. Wahi dummy video file ka path
+        dummy_video_path_str = os.path.join(pre_config.temp_video_path, "test_video.mp4")
+        
+        if not os.path.exists(dummy_video_path_str):
+            logger.warning(f"Test file not found at: {dummy_video_path_str}")
+            logger.warning("Please place a 'test_video.mp4' file in 'artifacts/temp_uploads/' to run this test.")
+            return
+
+        # 3. Aik unique session ID banayen
+        test_session_id = f"e2e_test_{uuid.uuid4()}"
+        logger.info(f"Using test session ID: {test_session_id}")
+
+        # 4. Pipeline ko initialize karain
+        pipeline = AnalysisPipeline(
+            video_path=dummy_video_path_str,
+            session_id=test_session_id
+        )
+        
+        # 5. Pipeline ko run karain
+        # Ye poora process (Pre, CV, NLP, Report) chalaye ga
+        pipeline.run()
+        
+        logger.info("--- Finished FULL End-to-End Pipeline Test ---")
+        logger.info(f"SUCCESS: Pipeline ran. Please check your database for a report with session_id: {test_session_id}")
+
+    except Exception as e:
+        logger.error(f"Full Pipeline test FAILED: {e}")
+        logger.exception(e)
+
 if __name__ == "__main__":
     #test_configuration()
     #test_preprocessing()
     #test_cv_analyzer()
     #test_nlp_analyzer()
-    test_report_generator()
+    #test_report_generator()
+    #test_full_analysis_pipeline()
     
