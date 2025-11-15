@@ -4,6 +4,8 @@ from prepview_engine.components.preprocessing import PreprocessingComponent
 import os 
 from prepview_engine.components.cv_analyzer import CVAnalyzerComponent
 from prepview_engine.components.nlp_analyzer import NLPAnalyzerComponent
+from prepview_engine.database.db_connector import DatabaseConnector
+from prepview_engine.components.report_generator import ReportGeneratorComponent
 
 from pathlib import Path
 
@@ -181,9 +183,64 @@ def test_nlp_analyzer():
         logger.error(f"NLP Analyzer test FAILED: {e}")
         logger.exception(e)
 
+def test_report_generator():
+    """
+    Tests the ReportGeneratorComponent (Scoring + DB Write).
+    """
+    logger.info("--- Starting Report Generator Component Test ---")
+    
+    try:
+        # 1. Config load karain
+        config_manager = ConfigurationManager()
+        db_config = config_manager.get_database_config()
+        scoring_config = config_manager.get_scoring_config()
+        
+        # 2. Database Connector aur Tables banayen
+        logger.info("Initializing Database Connector...")
+        db_connector = DatabaseConnector(config=db_config)
+        
+        # Ye line database mai 'analysis_reports' table banaye gi
+        db_connector.create_tables() 
+
+        # 3. Dummy data (jo hamaray pichlay components say milta)
+        # Ham yahan sample data hardcode kar rahay hain
+        dummy_cv_results = {
+            'cv_total_frames': 1500,
+            'gaze_analysis': {'center': 85.0, 'no_face_detected': 15.0},
+            'posture_analysis': {'upright': 90.0, 'slouched': 10.0}
+        }
+        dummy_nlp_results = {
+            'transcript': 'This is a test transcript. Um, I think it is good.',
+            'sentiment': {'label': 'POSITIVE', 'score': 0.95},
+            'communication': {'filler_word_count': 1, 'total_words': 10}
+        }
+        dummy_session_id = "test_session_52345"
+
+        # 4. Component ko initialize karain
+        report_gen = ReportGeneratorComponent(
+            cv_results=dummy_cv_results,
+            nlp_results=dummy_nlp_results,
+            session_id=dummy_session_id,
+            scoring_config=scoring_config,
+            db_connector=db_connector
+        )
+        
+        # 5. Component ko run karain
+        report_gen.run()
+        
+        logger.info("SUCCESS: Report Generator ran and saved data to database.")
+        logger.info("Please check your 'prepview_db' database in PostgreSQL to confirm.")
+        logger.info("--- Finished Report Generator Component Test ---")
+
+    except Exception as e:
+        logger.error(f"Report Generator test FAILED: {e}")
+        logger.exception(e)
+
+
 if __name__ == "__main__":
     #test_configuration()
     #test_preprocessing()
     #test_cv_analyzer()
-    test_nlp_analyzer()
+    #test_nlp_analyzer()
+    test_report_generator()
     
