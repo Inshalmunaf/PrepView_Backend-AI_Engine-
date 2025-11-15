@@ -9,3 +9,8 @@ SQLAlchemy
 python-dotenv
 moviepy
 opencv-python-headless
+mediapipe
+transformers
+torch
+spacy
+ffmpeg-python
