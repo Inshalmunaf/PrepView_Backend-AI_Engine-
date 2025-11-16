@@ -6,6 +6,7 @@ from pathlib import Path
 from prepview_engine.utils.common import logger
 from prepview_engine.pipeline.analysis_pipeline import AnalysisPipeline
 from prepview_engine.config.configuration import ConfigurationManager
+from prepview_engine.database.db_connector import DatabaseConnector
 
 app = FastAPI(
     title="PrepView AI Analysis Engine",
@@ -104,20 +105,45 @@ async def analyze_response(
         return {"status": "error", "message": f"An error occurred: {e}"}, 500
 
 # --- Report Retrieval Endpoint ---
-# Ye endpoint frontend ko report fetch karnay k liye chahiyay hoga
-# (Isko ham baad mai implement kar saktay hain)
 @app.get("/get-report/{session_id}")
 async def get_report(session_id: str):
     """
     Retrieves all analysis reports for a given session_id.
-    (NOTE: This is a placeholder. Needs implementation.)
     """
-    logger.info(f"Received request for report: {session_id}")
-    # TODO:
-    # 1. DatabaseConnector ko initialize karain
-    # 2. Database say session_id ki bunyad par reports fetch karain
-    # 3. JSON response return karain
-    return {"message": "Not implemented yet. Fetching data for session:", "session_id": session_id}
+    logger.info(f"Received GET request for report: {session_id}")
+    try:
+        # 1. Database Connector banayen
+        # (Behtar tareeqa hai isay app startup par banana,
+        # lekin abhi kay liye ye bilkul theek kaam karay ga)
+        config_manager = ConfigurationManager()
+        db_config = config_manager.get_database_config()
+        db_connector = DatabaseConnector(config=db_config)
+        
+        # 2. Naya function call karkay reports fetch karain
+        reports = db_connector.get_reports_by_session(session_id=session_id)
+        
+        if not reports:
+            logger.warning(f"No reports found for session: {session_id}")
+            return {"status": "not_found", "message": "No reports found for this session."}
+        
+        # 3. SQLAlchemy objects ko JSON (dictionary) mai convert karain
+        # Taakay FastAPI unhain frontend ko bhej sakay
+        report_list = []
+        for report in reports:
+            report_dict = report.__dict__
+            report_dict.pop('_sa_instance_state', None) # SQLAlchemy ka extra data hata dain
+            report_list.append(report_dict)
+
+        logger.info(f"Successfully fetched {len(report_list)} reports for frontend.")
+        return {
+            "status": "success",
+            "session_id": session_id,
+            "reports": report_list
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in /get-report/ endpoint: {e}")
+        return {"status": "error", "message": str(e)}, 500
 
 
 # --- Server Runner ---
