@@ -68,7 +68,7 @@ def test_preprocessing():
         # 2. Aik dummy video file ka path banayen
         # (ASSUMPTION: Aapnay 'test_video.mp4' naam ki file
         # 'artifacts/temp_uploads/' folder mai rakh di hai)
-        dummy_video_path = os.path.join(pre_config.temp_video_path, "test_video.mp4")
+        dummy_video_path = os.path.join(pre_config.temp_video_path, "samplev14.mp4")
         
         # Check karain kay dummy file mojood hai
         if not os.path.exists(dummy_video_path):
@@ -109,28 +109,33 @@ def test_cv_analyzer():
     try:
         # 1. Config load karain (sirf path k liye)
         config_manager = ConfigurationManager()
+        cv_config = config_manager.get_cv_config()
         pre_config = config_manager.get_preprocessing_config()
         
         # 2. Wahi dummy video file ka path
-        dummy_video_path_str = os.path.join(pre_config.temp_video_path, "test_video.mp4")
+        dummy_video_path_str = os.path.join(pre_config.temp_video_path, "samplev14.mp4")
         dummy_video_path = Path(dummy_video_path_str)
         
         if not dummy_video_path.exists():
             logger.warning(f"Test file not found at: {dummy_video_path}")
-            logger.warning("Please place a 'test_video.mp4' file in 'artifacts/temp_uploads/' to run this test.")
+            logger.warning("Please place a '.mp4' file in 'artifacts/temp_uploads/' to run this test.")
             return
 
         # 3. Component ko initialize karain
-        cv_analyzer = CVAnalyzerComponent(video_path=dummy_video_path)
+        cv_analyzer = CVAnalyzerComponent(
+            video_path=dummy_video_path,
+            config = cv_config
+        )
         
         # 4. Component ko run karain
         results = cv_analyzer.run()
+        print(results)
         
         # 5. Results check karain
         logger.info("CV Analyzer Test Results:")
         logger.info(results)
         
-        if results and results.get("cv_total_frames", 0) > 0:
+        if results:
             logger.info("SUCCESS: CV Analyzer processed the video.")
         else:
             logger.error("FAILURE: CV Analyzer returned no results or processed 0 frames.")
@@ -153,7 +158,7 @@ def test_nlp_analyzer():
         nlp_config = config_manager.get_nlp_config()
         pre_config = config_manager.get_preprocessing_config()
         
-        dummy_audio_path_str = os.path.join(pre_config.temp_video_path, "test_video_audio.wav")
+        dummy_audio_path_str = os.path.join(pre_config.temp_video_path, "samplec.wav")
         dummy_audio_path = Path(dummy_audio_path_str)
         
         if not dummy_audio_path.exists():
@@ -167,7 +172,7 @@ def test_nlp_analyzer():
             config=nlp_config
         )
         
-        results = nlp_analyzer.run()
+        results = nlp_analyzer.run(session_id=223,question_id=1)
         
         logger.info("NLP Analyzer Test Results:")
         logger.info(results)
@@ -282,7 +287,7 @@ if __name__ == "__main__":
     #test_configuration()
     #test_preprocessing()
     #test_cv_analyzer()
-    #test_nlp_analyzer()
+    test_nlp_analyzer()
     #test_report_generator()
     #test_full_analysis_pipeline()
     

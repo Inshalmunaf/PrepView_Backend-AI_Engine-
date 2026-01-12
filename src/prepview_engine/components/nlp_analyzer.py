@@ -1,135 +1,326 @@
+import whisper
+import librosa
+import numpy as np
+import nltk
+import re
+import spacy
+from collections import Counter
 from pathlib import Path
 from prepview_engine.utils.common import logger
 from prepview_engine.config.configuration import NLPConfig
-from transformers import pipeline
-import spacy
-import torch
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+from nltk.tokenize import sent_tokenize, word_tokenize
+
+# NLTK Downloads (Safe check)
+try:
+    nltk.data.find('tokenizers/punkt')
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    nltk.download('punkt')
+    nltk.download('punkt_tab')
 
 class NLPAnalyzerComponent:
+    # --- SHARED MODELS (Optimized for speed) ---
+    _models_loaded = False
+    _whisper_model = None
+    _nlp_spacy = None
+    _embedder = None
+
     def __init__(self, audio_path: Path, config: NLPConfig):
         """
-        Initializes the NLP Analyzer component.
-        
+        Initializes NLP models and configuration.
         Args:
-            audio_path (Path): The path to the extracted audio file (.wav).
-            config (NLPConfig): The configuration object for NLP models.
+            audio_path (Path): Path to the audio file to analyze.
+            config (NLPConfig): Configuration object.
         """
-        self.audio_path = str(audio_path)
         self.config = config
+        self.audio_path = str(audio_path)
         
-        # Check if GPU is available
-        self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        logger.info(f"NLP models will run on device: {self.device}")
-
-        try:
-            # 1. Speech-to-Text (Whisper)
-            logger.info(f"Loading STT model: {self.config.stt_model_name}")
-            self.stt_pipeline = pipeline(
-                "automatic-speech-recognition",
-                model=self.config.stt_model_name,
-                device=self.device
-            )
+        # Load models ONLY if they haven't been loaded yet (Singleton Pattern)
+        if not NLPAnalyzerComponent._models_loaded:
+            logger.info("⏳ Loading NLP Models (Whisper, Spacy, BERT)... This happens only once.")
             
-            # 2. Sentiment Analysis
-            logger.info(f"Loading Sentiment model: {self.config.sentiment_model_name}")
-            self.sentiment_pipeline = pipeline(
-                "sentiment-analysis",
-                model=self.config.sentiment_model_name,
-                device=self.device
-            )
+            # 1. Load Whisper
+            NLPAnalyzerComponent._whisper_model = whisper.load_model(self.config.whisper_model)
             
-            # 3. SpaCy for filler words
-            logger.info("Loading spaCy model: en_core_web_sm")
-            self.nlp_spacy = spacy.load("en_core_web_sm")
+            # 2. Load Spacy
+            try:
+                NLPAnalyzerComponent._nlp_spacy = spacy.load(self.config.spacy_model)
+            except OSError:
+                logger.warning(f"Spacy model '{self.config.spacy_model}' not found. Downloading...")
+                from spacy.cli import download
+                download(self.config.spacy_model)
+                NLPAnalyzerComponent._nlp_spacy = spacy.load(self.config.spacy_model)
+
+            # 3. Load Sentence Transformer
+            NLPAnalyzerComponent._embedder = SentenceTransformer(self.config.transformer_model)
             
-            # Common filler words (aap isay params.yaml mai bhi daal saktay hain)
-            self.FILLER_WORDS = set([
-                'um', 'umm', 'uh', 'uhh', 'ah', 'ahh', 'er', 'err', 
-                'like', 'so', 'you know', 'basically', 'actually'
-            ])
-
-            logger.info("NLPAnalyzerComponent initialized successfully.")
-            
-        except Exception as e:
-            logger.error(f"Error loading NLP models: {e}")
-            raise
-
-    def transcribe_audio(self) -> str:
-        """Transcribes the audio file to text using Whisper."""
-        try:
-            logger.info(f"Starting transcription for: {self.audio_path}")
-            # chunk_length_s=30 STT ko long audio par behtar chalata hai
-            result = self.stt_pipeline(self.audio_path, chunk_length_s=30, return_timestamps=False)
-            transcript = result["text"].strip()
-            logger.info(f"Transcription successful. Transcript: {transcript[:50]}...")
-            return transcript
-        except Exception as e:
-            logger.error(f"Error during transcription: {e}")
-            return "" # Return empty string on failure
-
-    def analyze_sentiment(self, text: str) -> dict:
-        """Analyzes the sentiment of the given text."""
-        if not text:
-            return {"label": "NEUTRAL", "score": 0.0}
-        try:
-            result = self.sentiment_pipeline(text)
-            logger.info(f"Sentiment analysis result: {result[0]}")
-            return result[0] # Returns {'label': 'POSITIVE', 'score': 0.99}
-        except Exception as e:
-            logger.error(f"Error during sentiment analysis: {e}")
-            return {"label": "ERROR", "score": 0.0}
-
-    def analyze_communication(self, text: str) -> dict:
-        """Analyzes communication clarity (filler words, WPM)."""
-        if not text:
-            return {"filler_word_count": 0, "total_words": 0}
-            
-        doc = self.nlp_spacy(text.lower())
-        filler_count = 0
-        total_words = len(doc)
+            NLPAnalyzerComponent._models_loaded = True
+            logger.info("✅ NLP Models Loaded Successfully.")
         
-        # Filler words count
+        # Assign shared models to instance for easy access
+        self.whisper_model = NLPAnalyzerComponent._whisper_model
+        self.nlp_spacy = NLPAnalyzerComponent._nlp_spacy
+        self.embedder = NLPAnalyzerComponent._embedder
+        
+        logger.info(f"NLPAnalyzerComponent initialized for: {Path(audio_path).name}")
+
+    # ==========================================================
+    # 🎤 HELPER: LOAD & TRANSCRIBE
+    # ==========================================================
+    def _load_audio(self):
+        """Loads audio using Librosa."""
+        y, sr = librosa.load(self.audio_path, sr=None)
+        duration = librosa.get_duration(y=y, sr=sr)
+        return y, sr, duration
+
+    def _transcribe_audio(self):
+        """Transcribes audio using Whisper."""
+        return self.whisper_model.transcribe(
+            self.audio_path,
+            language=self.config.whisper_language,
+            word_timestamps=True
+        )
+
+    # ==========================================================
+    # 📊 HELPER: METRICS EXTRACTION
+    # ==========================================================
+    def _temporal_hesitation_metrics(self, words):
+        gaps = []
+        for i in range(len(words) - 1):
+            gap = words[i+1]["start"] - words[i]["end"]
+            if gap > 0:
+                gaps.append(gap)
+
+        long_pauses = [g for g in gaps if g > self.config.pause_threshold]
+
+        pause_density = len(long_pauses) / max(len(words), 1)
+        pause_variance = np.std(gaps) if gaps else 0.0
+
+        return {
+            "pause_density": round(pause_density, 3),
+            "pause_variance": round(pause_variance, 3)
+        }
+
+    def _extract_speech_metrics(self, transcript, duration):
+        words = []
+        for seg in transcript["segments"]:
+            words.extend(seg.get("words", []))
+
+        if len(words) < 2:
+            return {}, words
+
+        # --- Speech rate ---
+        total_words = len(words)
+        speech_rate_wpm = total_words / (duration / 60)
+
+        # --- Pause calculations ---
+        pauses = []
+        for i in range(len(words) - 1):
+            gap = words[i+1]["start"] - words[i]["end"]
+            if gap > 0:
+                pauses.append(gap)
+
+        long_pauses = [p for p in pauses if p > self.config.pause_threshold]
+
+        total_pause_time = sum(pauses)
+        pause_ratio = total_pause_time / duration
+        avg_pause_duration = np.mean(long_pauses) if long_pauses else 0.0
+        silence_to_speech_ratio = total_pause_time / max(duration - total_pause_time, 1e-5)
+
+        # --- Behavioral filler replacement ---
+        filler_rate = len(long_pauses) / max(total_words, 1)
+
+        # --- Rhythm stability ---
+        inter_word_intervals = [
+            words[i+1]["start"] - words[i]["end"]
+            for i in range(len(words) - 1)
+        ]
+        rhythm_stability = np.std(inter_word_intervals) if inter_word_intervals else 0.0
+
+        # --- Pause dynamics ---
+        hesitation = self._temporal_hesitation_metrics(words)
+
+        return {
+            "speech_rate_wpm": round(speech_rate_wpm, 2),
+            "pause_ratio": round(pause_ratio, 3),
+            "avg_pause_duration": round(avg_pause_duration, 2),
+            "silence_to_speech_ratio": round(silence_to_speech_ratio, 2),
+            "filler_rate": round(filler_rate, 3),
+            "rhythm_stability": round(rhythm_stability, 3),
+            "pause_density": hesitation["pause_density"],
+            "pause_variance": hesitation["pause_variance"]
+        }, words
+
+    def _syntactic_uncertainty(self, text):
+        doc = self.nlp_spacy(text)
+
+        aux_verbs = 0
+        subordinate_clauses = 0
+
         for token in doc:
-            if token.text in self.FILLER_WORDS:
-                filler_count += 1
-        
-        # Aap yahan Words Per Minute (WPM) bhi calculate kar saktay hain
-        # agar aap audio ki duration (preprocessing say) yahan pass karain
-        
-        result = {
-            "filler_word_count": filler_count,
-            "total_words": total_words
-        }
-        logger.info(f"Communication analysis result: {result}")
-        return result
+            if token.dep_ == "aux":
+                aux_verbs += 1
+            if token.dep_ in {"mark", "advcl", "ccomp"}:
+                subordinate_clauses += 1
 
-    def run(self) -> dict:
-        """
-        Runs the full NLP analysis on the audio file.
-        
-        Returns:
-            dict: A dictionary containing aggregated NLP analysis results.
-        """
-        logger.info("--- Starting NLP Analysis Component ---")
-        
-        # 1. Transcribe
-        transcript = self.transcribe_audio()
-        
-        if not transcript:
-            logger.warning("Transcription failed or audio was silent. Skipping further NLP analysis.")
-            return {"transcript": "", "sentiment": {}, "communication": {}}
-            
-        # 2. Analyze Sentiment
-        sentiment_result = self.analyze_sentiment(transcript)
-        
-        # 3. Analyze Communication
-        communication_result = self.analyze_communication(transcript)
-        
-        final_results = {
-            "transcript": transcript,
-            "sentiment": sentiment_result,
-            "communication": communication_result
+        total_tokens = len(doc)
+
+        return {
+            "aux_verb_ratio": round(aux_verbs / max(total_tokens, 1), 3),
+            "subordinate_clause_ratio": round(subordinate_clauses / max(total_tokens, 1), 3)
         }
-        
-        logger.info("--- Finished NLP Analysis Component ---")
-        return final_results
+
+    def _semantic_instability(self, sentences):
+        if len(sentences) < 2:
+            return 0.0
+
+        embeddings = self.embedder.encode(sentences)
+        sims = []
+
+        for i in range(len(embeddings) - 1):
+            sim = cosine_similarity(
+                [embeddings[i]], [embeddings[i+1]]
+            )[0][0]
+            sims.append(sim)
+
+        return round(1 - np.mean(sims), 3)
+
+    def _extract_linguistic_metrics(self, text):
+        sentences = sent_tokenize(text)
+        words = word_tokenize(text.lower())
+
+        total_words = len(words)
+        unique_words = len(set(words))
+
+        lexical_richness = unique_words / max(total_words, 1)
+
+        sentence_lengths = [len(word_tokenize(s)) for s in sentences]
+        sentence_length_std = np.std(sentence_lengths) if sentence_lengths else 0.0
+
+        word_counts = Counter(words)
+        repeated_words = sum(c for c in word_counts.values() if c > 1)
+        repetition_ratio = repeated_words / max(total_words, 1)
+
+        syntactic = self._syntactic_uncertainty(text)
+        semantic_drift = self._semantic_instability(sentences)
+
+        return {
+            "lexical_richness": round(lexical_richness, 3),
+            "sentence_length_std": round(sentence_length_std, 2),
+            "repetition_ratio": round(repetition_ratio, 3),
+            "syntactic_uncertainty": syntactic,
+            "semantic_instability": semantic_drift
+        }
+
+    # ==========================================================
+    # 🏆 SCORING SYSTEM (Config Driven)
+    # ==========================================================
+    def _compute_phase1_quality_score(self, speech, linguistic):
+        score = 100.0
+        cfg = self.config # Short alias
+
+        # 1. Speech Fluency
+        wpm = speech["speech_rate_wpm"]
+        rhythm = speech["rhythm_stability"]
+
+        if wpm < cfg.wpm_min or wpm > cfg.wpm_max:
+            score -= cfg.penalty_wpm_high
+        elif wpm < cfg.wpm_strict_min or wpm > cfg.wpm_strict_max:
+            score -= cfg.penalty_wpm_med
+
+        if rhythm > cfg.rhythm_stability_high:
+            score -= cfg.penalty_rhythm_high
+        elif rhythm > cfg.rhythm_stability_med:
+            score -= cfg.penalty_rhythm_med
+
+        # 2. Pause & Hesitation
+        if speech["pause_ratio"] > cfg.pause_ratio_high:
+            score -= cfg.penalty_pause_ratio_high
+        elif speech["pause_ratio"] > cfg.pause_ratio_med:
+            score -= cfg.penalty_pause_ratio_med
+
+        if speech["avg_pause_duration"] > cfg.avg_pause_high:
+            score -= cfg.penalty_avg_pause_high
+        elif speech["avg_pause_duration"] > cfg.avg_pause_med:
+            score -= cfg.penalty_avg_pause_med
+
+        if speech["filler_rate"] > cfg.filler_rate_high:
+            score -= cfg.penalty_filler_high
+        elif speech["filler_rate"] > cfg.filler_rate_med:
+            score -= cfg.penalty_filler_med
+
+        # 3. Linguistic Clarity
+        if linguistic["lexical_richness"] < cfg.lexical_richness_low:
+            score -= cfg.penalty_lexical_high
+        elif linguistic["lexical_richness"] < cfg.lexical_richness_med:
+            score -= cfg.penalty_lexical_med
+
+        if linguistic["repetition_ratio"] > cfg.repetition_ratio_high:
+            score -= cfg.penalty_repetition_high
+        elif linguistic["repetition_ratio"] > cfg.repetition_ratio_med:
+            score -= cfg.penalty_repetition_med
+
+        # 4. Structural Stability
+        if linguistic["sentence_length_std"] > cfg.sentence_length_std_high:
+            score -= cfg.penalty_sent_std_high
+        elif linguistic["sentence_length_std"] > cfg.sentence_length_std_med:
+            score -= cfg.penalty_sent_std_med
+
+        if linguistic["syntactic_uncertainty"]["aux_verb_ratio"] > cfg.aux_verb_ratio_high:
+            score -= cfg.penalty_aux_verb
+
+        if linguistic["semantic_instability"] > cfg.semantic_instability_high:
+            score -= cfg.penalty_semantic_high
+        elif linguistic["semantic_instability"] > cfg.semantic_instability_med:
+            score -= cfg.penalty_semantic_med
+
+        return round(max(0, min(score, 100)), 1)
+
+    # ==========================================================
+    # 🚀 MAIN RUNNER
+    # ==========================================================
+    def run(self, session_id, question_id):
+        """
+        Executes Phase-1 linguistic & speech analysis.
+        Uses self.audio_path initialized in __init__.
+        """
+        logger.info(f"Running NLP Analysis for Session: {session_id}, Question: {question_id}...")
+
+        try:
+            # Load & Transcribe using instance variables
+            _, _, duration = self._load_audio()
+            transcript = self._transcribe_audio()
+            text = transcript.get("text", "").strip()
+            
+            if not text:
+                logger.warning("Transcript is empty. Returning default metrics.")
+                return {"error": "Empty transcript", "score": 0}
+
+            # Extract metrics
+            speech_metrics, words = self._extract_speech_metrics(transcript, duration)
+            linguistic_metrics = self._extract_linguistic_metrics(text)
+
+            # Compute Score
+            phase1_score = self._compute_phase1_quality_score(
+                speech=speech_metrics,
+                linguistic=linguistic_metrics
+            )
+
+            logger.info(f"NLP Analysis Complete. Score: {phase1_score}/100")
+            
+            return {
+                "session_id": session_id,
+                "question_id": question_id,
+                "transcript": text,
+                "speech_metrics": speech_metrics,
+                "linguistic_metrics": linguistic_metrics,
+                "phase1_quality_score": phase1_score,
+                "phase": "phase_1",
+                "version": "v1.0"
+            }
+            
+        except Exception as e:
+            logger.error(f"NLP Analysis Failed: {e}")
+            raise e
