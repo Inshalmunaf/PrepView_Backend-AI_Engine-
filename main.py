@@ -248,6 +248,7 @@ def test_cv_analyzer1():
             logger.info(f"   > CV Score: {score}/100")
             logger.info(f"   > Dominant Mood: {mood}")
             logger.info(f"   > Eye Contact: {eye_contact}%")
+            return results
         else:
             logger.error("❌ FAILURE: Analysis returned empty results.")
 
@@ -352,7 +353,7 @@ def test_nlp_analyzer1():
             logger.info(f"   > NLP Score: {score}/100")
             logger.info(f"   > WPM: {wpm}")
             logger.info(f"   > Transcript Start: \"{transcript}...\"")
-            
+            return results
         else:
             logger.error("FAILURE: Analysis returned empty results.")
 
@@ -523,8 +524,8 @@ def saving_test():
     ensure_setup(db, SESSION_ID)
 
     # D. Get Mock Data
-    nlp_data = test_nlp_analyzer()
-    cv_data = test_cv_analyzer()
+    nlp_data = test_nlp_analyzer1()
+    cv_data = test_cv_analyzer1()
     print(f"DEBUG MAIN: NLP Data Type: {type(nlp_data)}") # Should be <class 'dict'>
     print(f"DEBUG MAIN: CV Data Type: {type(cv_data)}")
     # E. SAVE (Calling the function)
@@ -728,36 +729,37 @@ def run_saving_final_report():
         traceback.print_exc()
 
 #testing full analysis pipeline 
-def run_pipeline_integration_test():
+def test_process_chunk():
     print("\n" + "="*50)
-    print("STARTING ANALYSIS PIPELINE INTEGRATION TEST")
+    print("TESTING PIPELINE: PROCESS CHUNK")
     print("="*50)
 
     try:
-        # --- 1. SETUP VIDEO PATH VIA CONFIG ---
+        # --- 1. SETUP CONFIG & PATHS ---
         config_manager = ConfigurationManager()
         pre_config = config_manager.get_preprocessing_config()
         
-        # Wahi logic jo aapne Preprocessing test mai use ki
+        # Wahi dynamic path logic jo humne set ki thi
         video_filename = "samplev14.mp4" 
         VIDEO_PATH = os.path.join(pre_config.temp_video_path, video_filename)
 
         if not os.path.exists(VIDEO_PATH):
             logger.error(f"Test video not found at: {VIDEO_PATH}")
+            logger.info(f"Please place '{video_filename}' inside the temp folder defined in config.")
             return
 
-        # --- 2. DEFINE SESSION INFO ---
-        TEST_SESSION_ID = "pipeline_final_test_session_v2"
-        TEST_QUESTION_ID = "Q1_Final_Test"
+        # --- 2. DEFINE TEST DATA ---
+        TEST_SESSION_ID = "test_session_no_video_01"
+        TEST_QUESTION_ID = "Q_Chunk_01"
 
         # --- 3. INITIALIZE PIPELINE ---
-        logger.info("Initializing Analysis Pipeline...")
+        logger.info("Initializing Pipeline...")
         pipeline = AnalysisPipeline()
 
-        # --- 4. RUN PIPELINE ---
-        print(f"\n[PROCESSING] Processing Video: {VIDEO_PATH}...")
+        # --- 4. RUN PROCESS CHUNK ---
+        print(f"\n[PROCESSING] Processing Chunk: {TEST_QUESTION_ID}...")
         
-        success = pipeline.run_pipeline(
+        success = pipeline.process_chunk(
             session_id=TEST_SESSION_ID,
             question_id=TEST_QUESTION_ID,
             video_path=VIDEO_PATH
@@ -769,21 +771,27 @@ def run_pipeline_integration_test():
             print("VERIFYING DATABASE ENTRY")
             print("-" * 30)
             
-            # Check DB specifically for this chunk
+            # DB check karne ke liye Connector alag se banaya
             db = DatabaseConnector(config_manager.get_database_config())
+            
+            # Us session ke saaray chunks mangwaye
             chunks = db.get_all_chunks(TEST_SESSION_ID)
             
-            found = False
+            # Filter karke check kiya ke hamara question_id mila ya nahi
+            found_chunk = None
             for chunk in chunks:
                 if chunk['question_id'] == TEST_QUESTION_ID:
-                    print("SUCCESS: Data found in Database!")
-                    print(f"   > NLP Score: {chunk.get('phase1_score')}")
-                    print(f"   > CV Score: {chunk.get('cv_score')}")
-                    found = True
+                    found_chunk = chunk
                     break
             
-            if not found:
-                print("FAILURE: Pipeline succeeded but Data NOT found in DB.")
+            if found_chunk:
+                print("SUCCESS: Data found in Database!")
+                print(f"   > Question ID: {found_chunk.get('question_id')}")
+                print(f"   > NLP Score: {found_chunk.get('phase1_score')}")
+                print(f"   > CV Score: {found_chunk.get('cv_score')}")
+                print(f"   > Transcript: \"{str(found_chunk.get('transcript'))[:50]}...\"")
+            else:
+                print("FAILURE: Pipeline returned True, but Data was NOT found in DB.")
         else:
             print("FAILURE: Pipeline execution returned False.")
 
@@ -797,7 +805,7 @@ if __name__ == "__main__":
     #test_configuration()
     #test_preprocessing1()
     #test_cv_analyzer1()
-    test_nlp_analyzer1()
+    #test_nlp_analyzer1()
     #test_report_generator()
     #test_full_analysis_pipeline()
     #init_database()
@@ -806,5 +814,5 @@ if __name__ == "__main__":
     #run_db_aggregator_test()
     #run_generation()
     #run_saving_final_report()
-    #run_pipeline_integration_test()
+    test_process_chunk()
     
