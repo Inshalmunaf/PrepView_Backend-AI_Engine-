@@ -5,10 +5,13 @@ import os
 from prepview_engine.components.cv_analyzer import CVAnalyzerComponent
 from prepview_engine.components.nlp_analyzer import NLPAnalyzerComponent
 from prepview_engine.database.db_connector import DatabaseConnector
-from prepview_engine.components.report_generator import ReportGeneratorComponent
+#from prepview_engine.components.report_generator import ReportGeneratorComponent
 from prepview_engine.pipeline.analysis_pipeline import AnalysisPipeline
 import uuid
 from pathlib import Path
+
+from prepview_engine.database.models import User, InterviewSession
+
 
 def test_configuration():
     """
@@ -141,7 +144,7 @@ def test_cv_analyzer():
             logger.error("FAILURE: CV Analyzer returned no results or processed 0 frames.")
             
         logger.info("--- Finished CV Analyzer Component Test ---")
-
+        return results
     except Exception as e:
         logger.error(f"CV Analyzer test FAILED: {e}")
         logger.exception(e)
@@ -184,7 +187,7 @@ def test_nlp_analyzer():
             logger.error("FAILURE: NLP Analyzer did not produce a transcript.")
             
         logger.info("--- Finished NLP Analyzer Component Test ---")
-
+        return results
     except Exception as e:
         logger.error(f"NLP Analyzer test FAILED: {e}")
         logger.exception(e)
@@ -283,11 +286,131 @@ def test_full_analysis_pipeline():
         logger.error(f"Full Pipeline test FAILED: {e}")
         logger.exception(e)
 
+def init_database():
+    print("🚀 Initializing Database...")
+    
+    # 1. Config Load karein
+    try:
+        config_manager = ConfigurationManager()
+        db_config = config_manager.get_database_config()
+        print(f"✅ Configuration Loaded for DB: {db_config.database}")
+    except Exception as e:
+        print(f"❌ Config Error: {e}")
+        return
+
+    # 2. Connection banayen
+    try:
+        connector = DatabaseConnector(db_config)
+        print("✅ Connected to PostgreSQL successfully.")
+    except Exception as e:
+        print(f"❌ Connection Failed. Check .env credentials! Error: {e}")
+        return
+
+    # 3. Tables Create karein
+    try:
+        connector.init_db()  # Yeh models.py se tables bana dega
+        print("🎉 SUCCESS! All tables created in 'prepview_db'.")
+    except Exception as e:
+        print(f"❌ Failed to create tables: {e}")
+
+
+# To Check interview chunks are saved to database or not 
+def ensure_setup(db, sess_id):
+    """User aur Session create karta hai taakay Data save hosakay"""
+    s = db.SessionLocal()
+    try:
+        # Dummy User
+        if not s.query(User).filter_by(username="Tester").first():
+            s.add(User(username="Tester", email="test@test.com", password_hash="123"))
+            s.commit()
+            print("👤 Dummy User Created")
+        
+        # Dummy Session
+        user = s.query(User).filter_by(username="Tester").first()
+        if not s.query(InterviewSession).filter_by(session_id=sess_id).first():
+            s.add(InterviewSession(session_id=sess_id, user_id=user.id, target_role="Dev"))
+            s.commit()
+            print("📅 Dummy Session Created")
+    except Exception as e:
+        print(e)
+    finally:
+        s.close()
+
+def saving_test():
+    print("🚀 Starting Test...")
+    
+    # A. Setup DB
+    config = ConfigurationManager()
+    db = DatabaseConnector(config.get_database_config())
+    
+    
+    # B. Define IDs
+    SESSION_ID = "test_session_no_video_01"
+    QUESTION_ID = "Q2"
+    
+    # C. Prepare Foreign Keys
+    ensure_setup(db, SESSION_ID)
+
+    # D. Get Mock Data
+    nlp_data = test_nlp_analyzer()
+    cv_data = test_cv_analyzer()
+    print(f"DEBUG MAIN: NLP Data Type: {type(nlp_data)}") # Should be <class 'dict'>
+    print(f"DEBUG MAIN: CV Data Type: {type(cv_data)}")
+    # E. SAVE (Calling the function)
+    try:
+        db.save_chunk_result(
+            session_id=SESSION_ID,
+            question_id=QUESTION_ID,
+            cv_result=cv_data,
+            nlp_result=nlp_data
+        )
+        print("\n✅ TEST PASSED: Data saved successfully without video_path!")
+    except Exception as e:
+        print(f"\n❌ TEST FAILED: {e}")
+
+# Testing if all chuncks are accessed from the database based on session id
+def test_retrieval():
+    print("🚀 TESTING DATA RETRIEVAL...")
+
+    # 1. Initialize DB
+    config = ConfigurationManager()
+    db = DatabaseConnector(config.get_database_config())
+
+    # 2. Session ID (Jo aapne Save Test mein use kiya tha)
+    TARGET_SESSION = "test_session_no_video_01" 
+
+    # 3. Fetch Data
+    chunks = db.get_all_chunks(TARGET_SESSION)
+
+    # 4. Validate Results
+    if chunks:
+        print(f"✅ Success! Found {len(chunks)} chunks.")
+        
+        # Pehle chunk ko inspect karte hain
+        for i in range(len(chunks)):
+            first_chunk = chunks[i]
+            
+            print("\n--- 🔍 Inspecting Attributes (Based on Image) ---")
+            print(f"1. Question ID: {first_chunk.get('question_id')}")
+            print(f"2. Transcript:  {first_chunk.get('transcript')}")
+            print(f"3. Prosodic Conf: {first_chunk.get('prosodic_confidence')}")
+            
+            # Checking JSONs
+            print(f"4. Speech Metrics: {first_chunk.get('speech_metrics')}")
+            print(f"5. Facial Expression: {first_chunk.get('facial_expression')}")
+            
+            print("\n✅ All attributes accessed successfully!")
+    else:
+        print("❌ No data found. Did you run the 'Saving Test' first?")
+
 if __name__ == "__main__":
     #test_configuration()
     #test_preprocessing()
     #test_cv_analyzer()
-    test_nlp_analyzer()
+    #test_nlp_analyzer()
     #test_report_generator()
     #test_full_analysis_pipeline()
+    #init_database()
+    #saving_test()
+    #test_retrieval()
     

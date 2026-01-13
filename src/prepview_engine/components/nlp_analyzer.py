@@ -317,6 +317,7 @@ class NLPAnalyzerComponent:
                 "speech_metrics": speech_metrics,
                 "linguistic_metrics": linguistic_metrics,
                 "phase1_quality_score": phase1_score,
+                "prosodic_confidence":0.0,
                 "phase": "phase_1",
                 "version": "v1.0"
             }

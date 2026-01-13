@@ -3,6 +3,7 @@ from sqlalchemy.orm import sessionmaker
 from prepview_engine.utils.common import logger
 from prepview_engine.config.configuration import DatabaseConfig
 from .models import Base, InterviewChunk, FinalReport, InterviewSession
+import numpy as np 
 
 class DatabaseConnector:
     def __init__(self, config: DatabaseConfig):
@@ -36,69 +37,124 @@ class DatabaseConnector:
             yield session
         finally:
             session.close()
-
-    # --- SPECIFIC QUERIES FOR YOUR FLOW ---
-
-    def save_chunk_result(self, session_id: str, question_id: str, cv_data: dict, nlp_data: dict, video_path: str):
-        """Saves a single question's analysis."""
+  # To convert the float32 into float 
+    def _sanitize(self, obj):
+        """
+        Recursively converts Numpy types to standard Python types.
+        (float32 -> float, int64 -> int, etc.)
+        """
+        if isinstance(obj, (np.integer, int)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, float)):
+            return round(float(obj), 4) # 4 decimal places tak round kar diya
+        elif isinstance(obj, (np.ndarray, list)):
+            return [self._sanitize(x) for x in obj]
+        elif isinstance(obj, dict):
+            return {k: self._sanitize(v) for k, v in obj.items()}
+        return obj
+  # TO save the interview chunks in database 
+    def save_chunk_result(self, session_id: str, question_id: str, cv_result: dict, nlp_result: dict):
+        """
+        Saves analysis data safely (Handles NoneTypes automatically).
+        """
         session = self.SessionLocal()
         try:
-            chunk = InterviewChunk(
+
+            # --- 🛡️ SAFETY CHECK (The Fix) ---
+            # Agar galti se None pass ho jaye, to usay Empty Dict bana do taakay .get() fail na ho
+            if nlp_result is None: nlp_result = {}
+            if cv_result is None: cv_result = {}
+            nlp_result = self._sanitize(nlp_result)
+            cv_result = self._sanitize(cv_result)
+            # --- 1. Safe Extraction Helpers ---
+            # Nested dictionaries ko safely nikalna (agar key ho magar value None ho)
+            speech_metrics = nlp_result.get("speech_metrics") or {}
+            linguistic_metrics = nlp_result.get("linguistic_metrics") or {}
+            
+            head_movement = cv_result.get("head_movement") or {}
+            eye_gaze = cv_result.get("eye_gaze") or {}
+            facial_expression = cv_result.get("facial_expression") or {}
+
+            # --- 2. Create Object ---
+            new_chunk = InterviewChunk(
                 session_id=session_id,
                 question_id=question_id,
-                cv_analysis=cv_data,
-                nlp_analysis=nlp_data,
-                video_path=video_path
+                
+                # NLP Mappings
+                nlp_full_json=nlp_result,
+                transcript=nlp_result.get("transcript", ""),
+                
+                # Humne upar 'or {}' lagaya hai, isliye ye ab safe hain
+                speech_metrics=speech_metrics, 
+                linguistic_metrics=linguistic_metrics,
+                
+                phase1_score=nlp_result.get("phase1_quality_score", 0.0),
+                prosodic_confidence=nlp_result.get("prosodic_confidence", 0.0),
+
+                # CV Mappings
+                cv_full_json=cv_result,
+                head_movement=head_movement,
+                eye_gaze=eye_gaze,
+                facial_expression=facial_expression
             )
-            session.add(chunk)
+
+            session.add(new_chunk)
             session.commit()
-            logger.info(f"💾 Chunk Saved: {question_id} for Session {session_id}")
+            logger.info(f" Data Stored Safely: {question_id}")
+
         except Exception as e:
             session.rollback()
-            logger.error(f"Error saving chunk: {e}")
+            logger.error(f" DB Save Error: {e}")
             raise e
         finally:
             session.close()
 
+# Access All the chunks Analyses by Session id 
     def get_all_chunks(self, session_id: str):
-        """Fetches all chunks for aggregation."""
+        """
+        Fetches all chunks matching the Session ID.
+        Retrieves exact attributes shown in the database schema image.
+        """
         session = self.SessionLocal()
         try:
+            # 1. Query Database for specific session
             chunks = session.query(InterviewChunk).filter_by(session_id=session_id).all()
-            # Convert SQLAlchemy objects to list of dicts for Aggregator
-            return [
-                {
-                    "question_id": c.question_id, 
-                    "cv_analysis": c.cv_analysis, 
-                    "nlp_analysis": c.nlp_analysis
-                } 
-                for c in chunks
-            ]
-        finally:
-            session.close()
+            
+            logger.info(f"📂 Fetched {len(chunks)} chunks for Session: {session_id}")
 
-    def save_final_report(self, session_id: str, user_id: int, summary: dict, feedback: str):
-        """Saves the final generated report."""
-        session = self.SessionLocal()
-        try:
-            report = FinalReport(
-                session_id=session_id,
-                user_id=user_id,
-                summary_metrics=summary,
-                ai_feedback=feedback
-            )
-            session.add(report)
-            
-            # Update Session Status to completed
-            interview = session.query(InterviewSession).filter_by(session_id=session_id).first()
-            if interview:
-                interview.status = "completed"
-            
-            session.commit()
-            logger.info(f"✅ Final Report Saved for Session {session_id}")
+            results_list = []
+            for chunk in chunks:
+                # 2. Map Database Columns to Dictionary
+                # Hum wahi fields utha rahe hain jo Image mein hain
+                chunk_data = {
+                    "session_id": chunk.session_id,
+                    "question_id": chunk.question_id,
+                    
+                    # --- Text Data ---
+                    "transcript": chunk.transcript,
+
+                    # --- Scores (Floats) ---
+                    "phase1_score": chunk.phase1_score,
+                    "prosodic_confidence": chunk.prosodic_confidence,
+
+                    # --- NLP JSON Data (Detailed Metrics) ---
+                    "speech_metrics": chunk.speech_metrics,          # Contains wpm, filler_rate
+                    "linguistic_metrics": chunk.linguistic_metrics,  # Contains lexical_richness
+                    "nlp_full_json": chunk.nlp_full_json,            # Backup Full Data
+
+                    # --- CV JSON Data (Detailed Metrics) ---
+                    "head_movement": chunk.head_movement,
+                    "eye_gaze": chunk.eye_gaze,                      # Contains eye_contact_pct
+                    "facial_expression": chunk.facial_expression,    # Contains mood, nervousness
+                    "cv_full_json": chunk.cv_full_json               # Backup Full Data
+                }
+                
+                results_list.append(chunk_data)
+
+            return results_list
+
         except Exception as e:
-            session.rollback()
-            logger.error(f"Error saving report: {e}")
-            raise e
+            logger.error(f"Error fetching chunks: {e}")
+            return []
         finally:
             session.close()

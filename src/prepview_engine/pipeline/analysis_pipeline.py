@@ -3,7 +3,7 @@ from prepview_engine.config.configuration import ConfigurationManager
 from prepview_engine.components.preprocessing import PreprocessingComponent
 from prepview_engine.components.cv_analyzer import CVAnalyzerComponent
 from prepview_engine.components.nlp_analyzer import NLPAnalyzerComponent
-from prepview_engine.components.report_generator import ReportGeneratorComponent
+#from prepview_engine.components.report_generator import ReportGeneratorComponent
 from prepview_engine.database.db_connector import DatabaseConnector
 from pathlib import Path
 import os

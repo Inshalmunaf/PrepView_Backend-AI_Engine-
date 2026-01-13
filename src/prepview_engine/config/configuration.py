@@ -9,16 +9,16 @@ from dotenv import load_dotenv
 # Aur IDE par auto-completion bhi dengey.
 load_dotenv()
 class DatabaseConfig(BaseModel):
-    # UPDATED FOR POSTGRESQL
-    db_type: str
-    db_user: str
-    db_password: str
-    db_host: str
-    db_port: int
-    db_name: str
+    drivername: str 
+    host: str
+    port: int
+    username: str
+    password: str
+    database: str
 
     def get_sqlalchemy_uri(self) -> str:
-        return f"{self.db_type}://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        """Generates the connection string for SQLAlchemy"""
+        return f"{self.drivername}://{self.username}:{self.password}@{self.host}:{self.port}/{self.database}"
 
 class PreprocessingConfig(BaseModel):
     # DirectoryPath check karay ga kay ye folder exist karta hai
@@ -141,6 +141,15 @@ class CVConfig(BaseModel):
     expr_default_brow_squeeze: float
     expr_default_brow_drop: float
 
+class ReportConfig(BaseModel):
+    llm_provider: str
+    model_name: str
+    base_url: str 
+    temperature: float
+    max_tokens: int
+    system_prompt: str
+    user_prompt_template: str
+
 # --- Step 2: The Main Configuration Manager Class ---
 
 class ConfigurationManager:
@@ -169,34 +178,37 @@ class ConfigurationManager:
     def get_database_config(self) -> DatabaseConfig:
         """
         Returns database configuration.
-        Non-sensitive info (db_type) comes from config.yaml.
-        Sensitive info (user, pass, host, etc.) comes from .env file.
+        - Non-sensitive info (drivername) from config.yaml/params.yaml
+        - Sensitive info (user, pass, host) from .env file
         """
         try:
-            config = self.config.database # config.yaml say
+            # YAML se driver uthaya (agar params.yaml mein hai)
+            # Agar nahi hai toh default 'postgresql' rakh lein
+            driver = self.params.database.drivername if hasattr(self.params.database, 'drivername') else "postgresql"
             
-            # Ab credentials environment say uthayen
+            # Environment Variables se credentials uthaye
             db_user = os.getenv("DB_USER")
             db_password = os.getenv("DB_PASSWORD")
             db_host = os.getenv("DB_HOST")
-            db_port = int(os.getenv("DB_PORT")) # Port ko integer mai convert kara hai
+            db_port = os.getenv("DB_PORT")
             db_name = os.getenv("DB_NAME")
 
-    
+            # Validation: Agar koi bhi cheez missing ho toh error do
             if not all([db_user, db_password, db_host, db_port, db_name]):
-                raise ValueError("Database credentials (DB_USER, DB_PASSWORD, etc.) not found in .env file.")
+                raise ValueError("❌ Missing Database Credentials! Please check your .env file.")
 
             return DatabaseConfig(
-                db_type=config.db_type, # Ye config.yaml say aaya
-                db_user=db_user,         # Ye .env say aaya
-                db_password=db_password, # Ye .env say aaya
-                db_host=db_host,         # Ye .env say aaya
-                db_port=db_port,         # Ye .env say aaya
-                db_name=db_name          # Ye .env say aaya
+                drivername=driver,
+                username=db_user,
+                password=db_password,
+                host=db_host,
+                port=int(db_port), # String ko Integer banana zaroori hai
+                database=db_name
             )
+            
         except Exception as e:
             logger.error(f"Error parsing database config: {e}")
-            raise
+            raise e
 
     def get_preprocessing_config(self) -> PreprocessingConfig:
         """Returns preprocessing configuration (e.g., file paths)"""
@@ -353,4 +365,16 @@ class ConfigurationManager:
             n_estimators=params.n_estimators,
             random_state=params.random_state,
             test_size=params.test_size
+        )
+    
+    def get_report_config(self) -> ReportConfig:
+        cfg = self.params.report_generation
+        return ReportConfig(
+            llm_provider=cfg.llm.provider,
+            model_name=cfg.llm.model_name,
+            base_url=cfg.llm.get("base_url", "http://localhost:11434/api/generate"), # Default fallback
+            temperature=cfg.llm.temperature,
+            max_tokens=cfg.llm.max_tokens,
+            system_prompt=cfg.prompts.system_role,
+            user_prompt_template=cfg.prompts.user_template
         )

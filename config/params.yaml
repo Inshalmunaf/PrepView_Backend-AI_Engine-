@@ -9,6 +9,10 @@ confidence_model_params:
   random_state: 42
   test_size: 0.2
 
+# Database Component
+database:
+  db_type: "postgresql"
+
 # NLP Analyzer Component
 nlp_analysis:
   models:
@@ -117,3 +121,39 @@ cv_analysis:
     default_lip_thickness: 0.025
     default_brow_squeeze: 0.33
     default_brow_drop: 0.35
+
+# Report Generation Component
+
+report_generation:
+  llm:
+    provider: "ollama"
+    model_name: "llama3"  # Ya "mistral", jo bhi aapne install kiya ho
+    base_url: "http://localhost:11434/api/generate"
+    temperature: 0.7
+    max_tokens: 600
+
+  prompts:
+    system_role: "You are an expert AI Interview Coach. Analyze behavioral and technical interview performance metrics to provide constructive feedback."
+    
+    user_template: |
+      Here is the summary of the candidate's interview session:
+
+      ### 1. Speech Analysis
+      - Average Speaking Pace: {avg_wpm} WPM (Ideal: 110-160)
+      - Pauses & Hesitation: {avg_pause_ratio}% silence.
+      - Filler Words: {avg_filler_rate} freq.
+      - Vocal Confidence: {avg_prosodic_confidence}/100.
+
+      ### 2. Visual Analysis
+      - Eye Contact: {avg_eye_contact}%
+      - Dominant Emotion: {dominant_mood}
+      - Nervousness Signs: {avg_nervousness}%
+
+      ### 3. Transcript Snippet
+      "{transcript_snippet}..."
+
+      ### Task:
+      Based on these metrics, provide:
+      1. **Strengths:** (3 bullet points)
+      2. **Areas for Improvement:** (3 actionable tips)
+      3. **Overall Verdict:** (2-line summary)
