@@ -1,146 +1,117 @@
 import numpy as np
-from typing import List, Dict, Any
+from typing import Dict, Any, List
 from collections import Counter
 from prepview_engine.utils.common import logger
 
 class ResultAggregator:
-    def __init__(self):
-        logger.info("✅ Result Aggregator Initialized.")
+    def __init__(self, db_connector):
+        self.db = db_connector
+        # Emoji removed below
+        logger.info("Result Aggregator Initialized (with DB connection).")
 
+    # ==========================================
+    # 🧹 HELPER: DATA CLEANING
+    # ==========================================
     def _sanitize(self, value):
-        """
-        Converts Numpy types to standard Python types.
-        (Database or JSON serialization will crash without this).
-        """
-        if isinstance(value, (np.integer, int)):
-            return int(value)
-        elif isinstance(value, (np.floating, float)):
-            return round(float(value), 2)
-        elif isinstance(value, (np.ndarray, list)):
-            return [self._sanitize(x) for x in value]
-        elif isinstance(value, dict):
-            return {k: self._sanitize(v) for k, v in value.items()}
+        if isinstance(value, (np.integer, int)): return int(value)
+        elif isinstance(value, (np.floating, float)): return round(float(value), 2)
+        elif isinstance(value, (np.ndarray, list)): return [self._sanitize(x) for x in value]
+        elif isinstance(value, dict): return {k: self._sanitize(v) for k, v in value.items()}
         return value
 
     def _safe_mean(self, values: List[float]) -> float:
-        """Calculates average safely (handles empty lists to avoid ZeroDivisionError)."""
-        if not values:
-            return 0.0
+        if not values: return 0.0
         return round(float(np.mean(values)), 2)
 
-    def aggregate_session(self, chunks_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    # ==========================================
+    # 🚀 MAIN FUNCTION
+    # ==========================================
+    def aggregate_session(self, session_id: str) -> Dict[str, Any]:
         """
-        Combines multiple InterviewChunk data into a single Master Summary.
-        
-        Args:
-            chunks_data: List of dictionaries representing InterviewChunk rows.
-                         Expected keys: 'wpm', 'eye_contact_pct', 'transcript', etc.
-        
-        Returns:
-            Dict: Aggregated Summary ready for FinalReport.summary_metrics
+        Fetches chunks internally using session_id and produces a summary.
         """
-        if not chunks_data:
-            logger.warning("⚠️ No chunks provided for aggregation.")
+        
+        # 1. Fetch Data from DB internally
+        # Emoji removed below
+        logger.info(f"Fetching chunks internally for Session: {session_id}")
+        session_chunks = self.db.get_all_chunks(session_id)
+
+        if not session_chunks:
+            logger.warning(f"No chunks found for Session ID: {session_id}")
             return {}
 
-        logger.info(f"📊 Aggregating data from {len(chunks_data)} chunks...")
+        # Emoji removed below
+        logger.info(f"Aggregating {len(session_chunks)} chunks...")
 
-        # --- 1. Storage Lists ---
-        transcripts = []
-        
-        # NLP Lists
-        scores = []
-        wpms = []
-        filler_rates = []
-        prosodic_scores = []
-        lexical_richness_list = [] # Ye JSON ke andar se nikalna padega
-        
-        # CV Lists
-        eye_contacts = []
-        nervousness_scores = []
-        dominant_moods = []
+        # 2. Storage Containers
+        # NLP
+        wpms, filler_rates, nlp_scores = [], [], []
+        # CV
+        cv_scores, eye_contacts, nervousness_scores, dominant_moods = [], [], [], []
 
-        # --- 2. Iterate & Extract ---
-        for chunk in chunks_data:
-            # A. Direct Columns (Fast Access)
-            if chunk.get("transcript"):
-                transcripts.append(chunk["transcript"])
+        # Weakest Link Logic
+        lowest_combined_score = 101.0
+        worst_transcript_snippet = "No transcript available."
+        worst_question_id = "N/A"
+
+        # 3. Iterate & Extract
+        for chunk in session_chunks:
             
-            if chunk.get("phase1_score") is not None:
-                scores.append(chunk["phase1_score"])
-            
-            if chunk.get("wpm") is not None:
-                wpms.append(chunk["wpm"])
-                
-            if chunk.get("filler_rate") is not None:
-                filler_rates.append(chunk["filler_rate"])
-                
-            if chunk.get("prosodic_confidence") is not None:
-                prosodic_scores.append(chunk["prosodic_confidence"])
+            # Scores
+            n_score = chunk.get("phase1_score", 0) or 0
+            nlp_scores.append(n_score)
 
-            if chunk.get("eye_contact_pct") is not None:
-                eye_contacts.append(chunk["eye_contact_pct"])
+            c_score = chunk.get("cv_score", 0) or 0 
+            cv_scores.append(c_score)
 
-            if chunk.get("nervousness_pct") is not None:
-                nervousness_scores.append(chunk["nervousness_pct"])
-                
-            if chunk.get("dominant_mood"):
-                dominant_moods.append(chunk["dominant_mood"])
+            # Detailed Metrics
+            speech = chunk.get("speech_metrics") or {}
+            wpms.append(speech.get("speech_rate_wpm", 0))
+            filler_rates.append(speech.get("filler_rate", 0))
 
-            # B. Deep Dive into JSON (agar koi extra info chahiye jo column mai nahi hai)
-            # Example: Lexical Richness column mai nahi tha, toh JSON se nikal rahe hain
-            nlp_json = chunk.get("nlp_data_json", {})
-            if nlp_json and "linguistic_metrics" in nlp_json:
-                richness = nlp_json["linguistic_metrics"].get("lexical_richness", 0)
-                lexical_richness_list.append(richness)
+            eye_data = chunk.get("eye_gaze") or {}
+            eye_contacts.append(eye_data.get("eye_contact_percentage", 0))
 
-        # --- 3. Calculation & Logic ---
+            face_data = chunk.get("facial_expression") or {}
+            dominant_moods.append(face_data.get("dominant_mood", "neutral"))
+            nerv_data = face_data.get("nervousness_analysis") or {}
+            nervousness_scores.append(nerv_data.get("total_concerned_percentage", 0))
 
-        # Text Merging
-        full_transcript = " ".join(transcripts)
+            # 4. Weakest Answer Logic (Combined Score)
+            if n_score > 0 and c_score > 0:
+                current_combined = (n_score + c_score) / 2
+            else:
+                current_combined = n_score if n_score > 0 else c_score
 
-        # Dominant Mood (Most Frequent)
+            if current_combined > 0 and current_combined < lowest_combined_score:
+                lowest_combined_score = current_combined
+                worst_question_id = chunk.get("question_id", "Unknown")
+                raw_text = chunk.get("transcript", "")
+                worst_transcript_snippet = raw_text[:800] if raw_text else "Audio unclear."
+
+        # 5. Final Calculations
         final_mood = "neutral"
         if dominant_moods:
             final_mood = Counter(dominant_moods).most_common(1)[0][0]
 
-        # Construct Summary Dictionary
         summary = {
-            "session_meta": {
-                "total_questions": len(chunks_data),
-                "aggregated_at": str(np.datetime64('now'))
-            },
-            
-            # Key Averages (For Columns)
-            "final_score": self._safe_mean(scores),
-            
             "nlp_aggregate": {
+                "avg_nlp_score": self._safe_mean(nlp_scores),
                 "avg_wpm": self._safe_mean(wpms),
                 "avg_filler_rate": self._safe_mean(filler_rates),
-                "avg_prosodic_confidence": self._safe_mean(prosodic_scores),
-                "avg_lexical_richness": self._safe_mean(lexical_richness_list),
-                "transcript_full_length": len(full_transcript),
-                # LLM Context (First 1000 chars to save tokens)
-                "transcript_sample": full_transcript[:1200] 
+                
+                # Context info for LLM
+                "weakest_answer_id": worst_question_id,
+                "lowest_combined_score": round(lowest_combined_score, 2),
+                "transcript_sample": worst_transcript_snippet
             },
             
             "cv_aggregate": {
+                "avg_cv_score": self._safe_mean(cv_scores),
                 "avg_eye_contact": self._safe_mean(eye_contacts),
                 "avg_nervousness": self._safe_mean(nervousness_scores),
-                "dominant_mood": final_mood,
-                "mood_consistency": self._calculate_consistency(dominant_moods)
+                "dominant_mood": final_mood
             }
         }
 
-        # --- 4. Final Sanitization ---
         return self._sanitize(summary)
-
-    def _calculate_consistency(self, moods: List[str]) -> str:
-        """Helper to check if mood was stable."""
-        if not moods: return "Unknown"
-        most_common_count = Counter(moods).most_common(1)[0][1]
-        consistency_ratio = most_common_count / len(moods)
-        
-        if consistency_ratio > 0.8: return "Highly Consistent"
-        elif consistency_ratio > 0.5: return "Variable"
-        else: return "Fluctuating"

@@ -5,8 +5,9 @@ import os
 from prepview_engine.components.cv_analyzer import CVAnalyzerComponent
 from prepview_engine.components.nlp_analyzer import NLPAnalyzerComponent
 from prepview_engine.database.db_connector import DatabaseConnector
-#from prepview_engine.components.report_generator import ReportGeneratorComponent
+from prepview_engine.components.report_generator import ReportGenerator
 from prepview_engine.pipeline.analysis_pipeline import AnalysisPipeline
+from prepview_engine.components.result_aggregator import ResultAggregator
 import uuid
 from pathlib import Path
 
@@ -346,7 +347,7 @@ def saving_test():
     
     # B. Define IDs
     SESSION_ID = "test_session_no_video_01"
-    QUESTION_ID = "Q2"
+    QUESTION_ID = "Q1"
     
     # C. Prepare Foreign Keys
     ensure_setup(db, SESSION_ID)
@@ -403,6 +404,229 @@ def test_retrieval():
     else:
         print("❌ No data found. Did you run the 'Saving Test' first?")
 
+#Check the Aggregation is done properly or not 
+def run_db_aggregator_test():
+        print("🚀 TESTING AGGREGATOR (With Internal DB Call)...")
+
+        # 1. Setup DB Connection
+        config_manager = ConfigurationManager()
+        db = DatabaseConnector(config_manager.get_database_config())
+
+        # 2. Setup Aggregator (Pass DB instance here)
+        aggregator = ResultAggregator(db_connector=db)
+
+        # 3. Use the Session ID from your previous Database Test
+        TARGET_SESSION = "test_session_no_video_01" 
+
+        # 4. Run Aggregation (Sirf ID deni hai!)
+        print(f"🔄 Calling aggregator for session: {TARGET_SESSION}")
+        result = aggregator.aggregate_session(TARGET_SESSION)
+
+        # 5. Validate
+        if result:
+            print("\n✅ AGGREGATION SUCCESSFUL!")
+            print("="*40)
+            
+            nlp_data = result.get("nlp_aggregate", {})
+            cv_data = result.get("cv_aggregate", {})
+
+            print(f"🔹 Avg WPM: {nlp_data.get('avg_wpm')}")
+            print(f"🔹 Avg Eye Contact: {cv_data.get('avg_eye_contact')}%")
+            print(f"🔹 Weakest Question: {nlp_data.get('weakest_answer_id')}")
+            print(f"🔹 Transcript Context: \"{nlp_data.get('transcript_sample')[:50]}...\"")
+            print(f"🔹 Avg WPM: {cv_data.get('avg_cv_score')}")
+
+
+            print("="*40)
+        else:
+            print("❌ Failed: Result empty. Check Session ID or DB.")
+
+
+# To Check that feedback generation is done properly ornot 
+def run_generation():
+    print("\n" + "="*50)
+    print("🚀 STARTING FULL PIPELINE TEST")
+    print("="*50)
+
+    try:
+        # --- STEP 1: INITIALIZE COMPONENTS ---
+        logger.info("1️⃣ Loading Configuration...")
+        config_manager = ConfigurationManager()
+        
+        logger.info("2️⃣ Connecting to Database...")
+        db = DatabaseConnector(config_manager.get_database_config())
+
+        logger.info("3️⃣ Initializing Aggregator...")
+        aggregator = ResultAggregator(db_connector=db)
+
+        logger.info("4️⃣ Initializing Report Generator (LLM)...")
+        report_gen = ReportGenerator(config_manager.get_report_generation_config())
+
+        # --- STEP 2: DEFINE TARGET ---
+        # Wahi Session ID use karein jo DB mai save kiya tha
+        TARGET_SESSION_ID = "test_session_no_video_01"
+
+        # --- STEP 3: AGGREGATE DATA ---
+        print(f"\n🔄 Fetching & Aggregating Data for Session: {TARGET_SESSION_ID}...")
+        aggregated_data = aggregator.aggregate_session(TARGET_SESSION_ID)
+
+        if not aggregated_data:
+            logger.error(" Aggregation returned empty data! Check Session ID.")
+            return
+
+        # Quick Check of what we found
+        nlp = aggregated_data.get("nlp_aggregate", {})
+        print(f"   > Weakest Question Found: {nlp.get('weakest_answer_id')}")
+        print(f"   > Transcript Snippet: \"{nlp.get('transcript_sample')[:50]}...\"")
+
+        # --- STEP 4: GENERATE AI REPORT ---
+        print("\n🤖 Sending Data to AI Coach (Ollama)... This may take a few seconds.")
+        final_report = report_gen.generate_feedback(aggregated_data)
+
+        # --- STEP 5: PRINT RESULT ---
+        print("\n" + "="*50)
+        print("📄 FINAL PROFESSIONAL REPORT")
+        print("="*50)
+        print(final_report)
+        print("="*50)
+        print("\n TEST COMPLETED SUCCESSFULLY!")
+
+    except Exception as e:
+        logger.error(f" Pipeline Crashed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# To test the saving of finalreport in database 
+def run_saving_final_report():
+    print("\n" + "="*50)
+    print("STARTING FULL PIPELINE (WITH SAVE)")
+    print("="*50)
+
+    try:
+        # 1. Init
+        logger.info("[STEP 1] Loading Config & DB...")
+        config_manager = ConfigurationManager()
+        db = DatabaseConnector(config_manager.get_database_config())
+        
+        # ⚠️ IMPORTANT: Re-init DB tables because we changed models.py
+        # (Only do this in Dev environment, NOT production)
+        db.init_db() 
+
+        aggregator = ResultAggregator(db_connector=db)
+        report_gen = ReportGenerator(config_manager.get_report_generation_config())
+
+        # 2. Define Target
+        TARGET_SESSION_ID = "test_session_no_video_01"
+
+        # 3. Aggregate
+        print(f"\n[PROCESSING] Aggregating Data for: {TARGET_SESSION_ID}...")
+        aggregated_data = aggregator.aggregate_session(TARGET_SESSION_ID)
+        
+        if not aggregated_data:
+            logger.error("No data found to aggregate.")
+            return
+
+        # 4. Generate AI Report
+        print("[AI] Generating Feedback...")
+        feedback_text = report_gen.generate_feedback(aggregated_data)
+
+        # 5. SAVE TO DATABASE (The New Step)
+        print("\n[DB] Saving Report to Database...")
+        
+        # Data ko split karke bhejna hai
+        nlp_data = aggregated_data.get("nlp_aggregate", {})
+        cv_data = aggregated_data.get("cv_aggregate", {})
+
+        success = db.save_final_report(
+            session_id=TARGET_SESSION_ID,
+            nlp_data=nlp_data,
+            cv_data=cv_data,
+            feedback_text=feedback_text
+        )
+
+        if success:
+            print("\n" + "="*50)
+            print("PIPELINE COMPLETED & SAVED SUCCESSFULLY")
+            print("="*50)
+        else:
+            print("\n[ERROR] Report Generation worked, but Saving Failed.")
+
+    except Exception as e:
+        logger.error(f"Pipeline Failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+#testing full analysis pipeline 
+def run_pipeline_integration_test():
+    print("\n" + "="*50)
+    print("STARTING ANALYSIS PIPELINE INTEGRATION TEST")
+    print("="*50)
+
+    # --- CONFIGURATION ---
+    # ⚠️ Yahan apni kisi bhi real MP4 video ka path dein
+    # Agar file nahi mili to test ruk jayega.
+    VIDEO_PATH = "artifacts/data_ingestion/test_video.mp4" 
+    
+    TEST_SESSION_ID = "pipeline_final_test_session_01"
+    TEST_QUESTION_ID = "Q1_Test"
+
+    # --- STEP 1: CHECK FILE EXISTENCE ---
+    if not os.path.exists(VIDEO_PATH):
+        logger.error(f"[ERROR] Test Video not found at: {VIDEO_PATH}")
+        logger.info("Please place a video file there or update VIDEO_PATH in the script.")
+        return
+
+    try:
+        # --- STEP 2: INITIALIZE PIPELINE ---
+        logger.info("[INIT] Initializing Analysis Pipeline...")
+        pipeline = AnalysisPipeline()
+
+        # --- STEP 3: RUN PIPELINE ---
+        print(f"\n[PROCESSING] Processing Video: {VIDEO_PATH}...")
+        print(f"Session ID: {TEST_SESSION_ID} | Question ID: {TEST_QUESTION_ID}")
+        
+        success = pipeline.run_pipeline(
+            session_id=TEST_SESSION_ID,
+            question_id=TEST_QUESTION_ID,
+            video_path=VIDEO_PATH
+        )
+
+        # --- STEP 4: VERIFY IN DATABASE ---
+        if success:
+            print("\n" + "-"*30)
+            print("[VERIFICATION] Pipeline returned Success. Checking Database...")
+            
+            # DB Connector alag se banayen taakay check kar sakein
+            config = ConfigurationManager()
+            db = DatabaseConnector(config.get_database_config())
+            
+            # Fetch specifically this chunk
+            # (Assuming get_all_chunks returns a list, we filter or just get all)
+            chunks = db.get_all_chunks(TEST_SESSION_ID)
+            
+            target_chunk = None
+            for chunk in chunks:
+                if chunk['question_id'] == TEST_QUESTION_ID:
+                    target_chunk = chunk
+                    break
+            
+            if target_chunk:
+                print("\n✅ TEST PASSED: Data found in Database!")
+                print(f"   > NLP Score: {target_chunk.get('phase1_score')}")
+                print(f"   > CV Score: {target_chunk.get('cv_score')}")
+                print(f"   > Transcript: {str(target_chunk.get('transcript'))[:50]}...")
+            else:
+                print("\n❌ TEST FAILED: Pipeline said success, but Data NOT found in DB.")
+        else:
+            print("\n❌ TEST FAILED: Pipeline execution returned False.")
+
+    except Exception as e:
+        logger.error(f"[CRASH] Test script failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 if __name__ == "__main__":
     #test_configuration()
     #test_preprocessing()
@@ -413,4 +637,7 @@ if __name__ == "__main__":
     #init_database()
     #saving_test()
     #test_retrieval()
+    #run_db_aggregator_test()
+    #run_generation()
+    #run_saving_final_report()
     

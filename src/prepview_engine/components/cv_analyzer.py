@@ -412,6 +412,67 @@ class CVAnalyzerComponent:
         pct = round((total_center / total_time * 100), 2) if total_time > 0 else 0
         return {"eye_contact_percentage": pct, "major_movements": [e for e in events if e['direction']!='center'], "timeline": events}
 
+
+    def nonverbal_score(self,expression, eye_gaze, head_movement):
+        """
+        Returns a non-verbal confidence score between 0 and 100
+        """
+
+        # ---------- 1. Facial Expression & Nervousness ----------
+        neutral_pct = expression["emotion_distribution"].get("neutral", 0) / 100
+        concerned_pct = expression["emotion_distribution"].get("concerned", 0) / 100
+        lip_compression = (
+            expression["nervousness_analysis"]["breakdown"].get("lip_compression", 0) / 100
+        )
+
+        facial_score = (
+            0.6 * neutral_pct +
+            0.4 * (1 - concerned_pct)
+        )
+
+        facial_score -= 0.3 * lip_compression
+        facial_score = max(0.0, min(1.0, facial_score))
+
+
+        # ---------- 2. Eye Gaze & Contact ----------
+        eye_contact = eye_gaze.get("eye_contact_percentage", 0) / 100
+        gaze_losses = sum(
+            1 for t in eye_gaze.get("timeline", [])
+            if t.get("eyecontact") == "lost"
+        )
+
+        if eye_contact < 0.6:
+            eye_score = eye_contact
+        elif eye_contact <= 0.85:
+            eye_score = 1.0
+        else:
+            eye_score = 1 - (eye_contact - 0.85)
+
+        eye_score -= min(0.15, gaze_losses * 0.05)
+        eye_score = max(0.0, min(1.0, eye_score))
+
+
+        # ---------- 3. Head Movement Stability ----------
+        major_events = len(head_movement.get("major_events", []))
+
+        if major_events == 0:
+            head_score = 1.0
+        elif major_events <= 2:
+            head_score = 0.7
+        else:
+            head_score = 0.4
+
+
+        # ---------- Final Weighted Score ----------
+        final_score_0_1 = (
+            0.40 * facial_score +
+            0.45 * eye_score +
+            0.15 * head_score
+        )
+
+        return round(final_score_0_1 * 100, 1)
+   
+
     # ==========================================================
     # MAIN RUN (Aggregator)
     # ==========================================================
@@ -422,10 +483,12 @@ class CVAnalyzerComponent:
         head_data = self._analyze_head_movement()
         eye_data = self._analyze_eye_gaze()
         expr_data = self._analyze_expressions()
+        cv_score = self.nonverbal_score(expr_data,eye_data,head_data)
         
         logger.info("--- Finished CV Analysis Component ---")
         return {
             "head_movement": head_data,
             "eye_gaze": eye_data,
-            "facial_expression": expr_data
+            "facial_expression": expr_data,
+            "cv_score" : cv_score
         }

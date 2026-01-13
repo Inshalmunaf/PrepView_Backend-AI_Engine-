@@ -95,7 +95,8 @@ class DatabaseConnector:
                 cv_full_json=cv_result,
                 head_movement=head_movement,
                 eye_gaze=eye_gaze,
-                facial_expression=facial_expression
+                facial_expression=facial_expression,
+                cv_score=cv_result.get("cv_score", 0.0)
             )
 
             session.add(new_chunk)
@@ -146,7 +147,8 @@ class DatabaseConnector:
                     "head_movement": chunk.head_movement,
                     "eye_gaze": chunk.eye_gaze,                      # Contains eye_contact_pct
                     "facial_expression": chunk.facial_expression,    # Contains mood, nervousness
-                    "cv_full_json": chunk.cv_full_json               # Backup Full Data
+                    "cv_full_json": chunk.cv_full_json,              # Backup Full Data
+                    "cv_score": chunk.cv_score
                 }
                 
                 results_list.append(chunk_data)
@@ -156,5 +158,54 @@ class DatabaseConnector:
         except Exception as e:
             logger.error(f"Error fetching chunks: {e}")
             return []
+        finally:
+            session.close()
+
+# TO save final reports
+    def save_final_report(self, session_id: str, nlp_data: dict, cv_data: dict, feedback_text: str):
+        """
+        Saves the Generated AI Report + Aggregated Metrics into the DB.
+        Automatically finds user_id from the session.
+        """
+        session = self.SessionLocal()
+        try:
+            # 1. Find User ID linked to this Session
+            # Hum session table check karte hain ke ye interview kis user ka tha
+            interview_session = session.query(InterviewSession).filter_by(session_id=session_id).first()
+            
+            if not interview_session:
+                logger.error(f"❌ Session {session_id} not found! Cannot save report.")
+                return False
+            
+            user_id = interview_session.user_id
+
+            # 2. Check if report already exists (Update logic)
+            existing_report = session.query(FinalReport).filter_by(session_id=session_id).first()
+            
+            if existing_report:
+                logger.info(f"🔄 Updating existing report for Session: {session_id}")
+                existing_report.nlp_aggregate = nlp_data
+                existing_report.cv_aggregate = cv_data
+                existing_report.ai_feedback = feedback_text
+            else:
+                # 3. Create New Report
+                logger.info(f"📝 Creating new report for Session: {session_id}")
+                new_report = FinalReport(
+                    session_id=session_id,
+                    user_id=user_id,
+                    nlp_aggregate=nlp_data,
+                    cv_aggregate=cv_data,
+                    ai_feedback=feedback_text
+                )
+                session.add(new_report)
+
+            session.commit()
+            logger.info("✅ Final Report Saved Successfully!")
+            return True
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"❌ Failed to save final report: {e}")
+            return False
         finally:
             session.close()

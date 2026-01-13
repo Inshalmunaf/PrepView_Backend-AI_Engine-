@@ -141,10 +141,10 @@ class CVConfig(BaseModel):
     expr_default_brow_squeeze: float
     expr_default_brow_drop: float
 
-class ReportConfig(BaseModel):
-    llm_provider: str
+class ReportGenerationConfig(BaseModel):
+    provider: str
     model_name: str
-    base_url: str 
+    base_url: str
     temperature: float
     max_tokens: int
     system_prompt: str
@@ -332,21 +332,28 @@ class ConfigurationManager:
             logger.error(f"Error parsing CV params: {e}")
             raise e
 
+    def get_report_generation_config(self) -> ReportGenerationConfig:
+        
+        # params.yaml se 'report_generation' section uthaya
+        report_params = self.params.report_generation 
+        llm_params = report_params.llm
+        prompt_params = report_params.prompts
 
+        config = ReportGenerationConfig(
+            provider=llm_params.provider,
+            model_name=llm_params.model_name,
+            base_url=llm_params.base_url,
+            temperature=float(llm_params.temperature),
+            max_tokens=int(llm_params.max_tokens),
+            
+            # Prompts map kar rahay hain
+            system_prompt=prompt_params.system_role,
+            user_prompt_template=prompt_params.user_template
+        )
 
-    def get_scoring_config(self) -> ScoringConfig:
-        """Returns scoring thresholds from params.yaml"""
-        try:
-            params = self.params.scoring
-            return ScoringConfig(
-                gaze_good_threshold=params.gaze.good_threshold,
-                gaze_avg_threshold=params.gaze.avg_threshold,
-                filler_good_threshold=params.filler_words.good_threshold,
-                filler_avg_threshold=params.filler_words.avg_threshold
-            )
-        except Exception as e:
-            logger.error(f"Error parsing Scoring params: {e}")
-            raise
+        return config
+
+  
 
     def get_confidence_training_config(self) -> ConfidenceTrainingConfig:
         config = self.config.confidence_model_training
@@ -367,14 +374,4 @@ class ConfigurationManager:
             test_size=params.test_size
         )
     
-    def get_report_config(self) -> ReportConfig:
-        cfg = self.params.report_generation
-        return ReportConfig(
-            llm_provider=cfg.llm.provider,
-            model_name=cfg.llm.model_name,
-            base_url=cfg.llm.get("base_url", "http://localhost:11434/api/generate"), # Default fallback
-            temperature=cfg.llm.temperature,
-            max_tokens=cfg.llm.max_tokens,
-            system_prompt=cfg.prompts.system_role,
-            user_prompt_template=cfg.prompts.user_template
-        )
+ 
