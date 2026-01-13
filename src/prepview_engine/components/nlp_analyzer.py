@@ -1,3 +1,4 @@
+
 import whisper
 import librosa
 import numpy as np
@@ -27,15 +28,12 @@ class NLPAnalyzerComponent:
     _nlp_spacy = None
     _embedder = None
 
-    def __init__(self, audio_path: Path, config: NLPConfig):
+    def __init__(self, config: NLPConfig):
         """
         Initializes NLP models and configuration.
-        Args:
-            audio_path (Path): Path to the audio file to analyze.
-            config (NLPConfig): Configuration object.
+        Audio path is now passed in run() method.
         """
         self.config = config
-        self.audio_path = str(audio_path)
         
         # Load models ONLY if they haven't been loaded yet (Singleton Pattern)
         if not NLPAnalyzerComponent._models_loaded:
@@ -64,7 +62,10 @@ class NLPAnalyzerComponent:
         self.nlp_spacy = NLPAnalyzerComponent._nlp_spacy
         self.embedder = NLPAnalyzerComponent._embedder
         
-        logger.info(f"NLPAnalyzerComponent initialized for: {Path(audio_path).name}")
+        # Instance variable for current audio processing
+        self.audio_path = None
+        
+        logger.info("NLPAnalyzerComponent Initialized.")
 
     # ==========================================================
     # 🎤 HELPER: LOAD & TRANSCRIBE
@@ -222,8 +223,8 @@ class NLPAnalyzerComponent:
         cfg = self.config # Short alias
 
         # 1. Speech Fluency
-        wpm = speech["speech_rate_wpm"]
-        rhythm = speech["rhythm_stability"]
+        wpm = speech.get("speech_rate_wpm", 0)
+        rhythm = speech.get("rhythm_stability", 0)
 
         if wpm < cfg.wpm_min or wpm > cfg.wpm_max:
             score -= cfg.penalty_wpm_high
@@ -236,36 +237,36 @@ class NLPAnalyzerComponent:
             score -= cfg.penalty_rhythm_med
 
         # 2. Pause & Hesitation
-        if speech["pause_ratio"] > cfg.pause_ratio_high:
+        if speech.get("pause_ratio", 0) > cfg.pause_ratio_high:
             score -= cfg.penalty_pause_ratio_high
-        elif speech["pause_ratio"] > cfg.pause_ratio_med:
+        elif speech.get("pause_ratio", 0) > cfg.pause_ratio_med:
             score -= cfg.penalty_pause_ratio_med
 
-        if speech["avg_pause_duration"] > cfg.avg_pause_high:
+        if speech.get("avg_pause_duration", 0) > cfg.avg_pause_high:
             score -= cfg.penalty_avg_pause_high
-        elif speech["avg_pause_duration"] > cfg.avg_pause_med:
+        elif speech.get("avg_pause_duration", 0) > cfg.avg_pause_med:
             score -= cfg.penalty_avg_pause_med
 
-        if speech["filler_rate"] > cfg.filler_rate_high:
+        if speech.get("filler_rate", 0) > cfg.filler_rate_high:
             score -= cfg.penalty_filler_high
-        elif speech["filler_rate"] > cfg.filler_rate_med:
+        elif speech.get("filler_rate", 0) > cfg.filler_rate_med:
             score -= cfg.penalty_filler_med
 
         # 3. Linguistic Clarity
-        if linguistic["lexical_richness"] < cfg.lexical_richness_low:
+        if linguistic.get("lexical_richness", 0) < cfg.lexical_richness_low:
             score -= cfg.penalty_lexical_high
-        elif linguistic["lexical_richness"] < cfg.lexical_richness_med:
+        elif linguistic.get("lexical_richness", 0) < cfg.lexical_richness_med:
             score -= cfg.penalty_lexical_med
 
-        if linguistic["repetition_ratio"] > cfg.repetition_ratio_high:
+        if linguistic.get("repetition_ratio", 0) > cfg.repetition_ratio_high:
             score -= cfg.penalty_repetition_high
-        elif linguistic["repetition_ratio"] > cfg.repetition_ratio_med:
+        elif linguistic.get("repetition_ratio", 0) > cfg.repetition_ratio_med:
             score -= cfg.penalty_repetition_med
 
         # 4. Structural Stability
-        if linguistic["sentence_length_std"] > cfg.sentence_length_std_high:
+        if linguistic.get("sentence_length_std", 0) > cfg.sentence_length_std_high:
             score -= cfg.penalty_sent_std_high
-        elif linguistic["sentence_length_std"] > cfg.sentence_length_std_med:
+        elif linguistic.get("sentence_length_std", 0) > cfg.sentence_length_std_med:
             score -= cfg.penalty_sent_std_med
 
         if linguistic["syntactic_uncertainty"]["aux_verb_ratio"] > cfg.aux_verb_ratio_high:
@@ -281,12 +282,15 @@ class NLPAnalyzerComponent:
     # ==========================================================
     # 🚀 MAIN RUNNER
     # ==========================================================
-    def run(self, session_id, question_id):
+    def run(self, audio_path_str: str):
         """
         Executes Phase-1 linguistic & speech analysis.
-        Uses self.audio_path initialized in __init__.
+        Args:
+            audio_path_str (str): Path to the audio file.
         """
-        logger.info(f"Running NLP Analysis for Session: {session_id}, Question: {question_id}...")
+        self.audio_path = str(audio_path_str) # Set path for this run
+        
+        logger.info(f"Running NLP Analysis for: {Path(self.audio_path).name}...")
 
         try:
             # Load & Transcribe using instance variables
@@ -311,13 +315,11 @@ class NLPAnalyzerComponent:
             logger.info(f"NLP Analysis Complete. Score: {phase1_score}/100")
             
             return {
-                "session_id": session_id,
-                "question_id": question_id,
                 "transcript": text,
                 "speech_metrics": speech_metrics,
                 "linguistic_metrics": linguistic_metrics,
                 "phase1_quality_score": phase1_score,
-                "prosodic_confidence":0.0,
+                "prosodic_confidence": 0.0,
                 "phase": "phase_1",
                 "version": "v1.0"
             }

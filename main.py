@@ -103,7 +103,54 @@ def test_preprocessing():
     except Exception as e:
         logger.error(f"Preprocessing test FAILED: {e}")
         logger.exception(e)
+def test_preprocessing1():
+    """
+    Tests the PreprocessingComponent using the new architecture but old path logic.
+    """
+    logger.info("--- Starting Preprocessing Component Test ---")
+    
+    try:
+        # 1. Config load karain
+        config_manager = ConfigurationManager()
+        pre_config = config_manager.get_preprocessing_config()
+        
+        # 2. Path Logic (Aapki purani script wali)
+        # Hum config ke folder mai 'samplev14.mp4' dhoond rahay hain
+        video_filename = "samplev14.mp4" 
+        dummy_video_path = os.path.join(pre_config.temp_video_path, video_filename)
+        
+        # Check karain kay file mojood hai ya nahi
+        if not os.path.exists(dummy_video_path):
+            logger.warning(f"❌ Test file not found at: {dummy_video_path}")
+            logger.warning(f"Please place '{video_filename}' inside '{pre_config.temp_video_path}' folder to run this test.")
+            return
 
+        logger.info(f"✅ Found video file at: {dummy_video_path}")
+
+        # 3. Component ko initialize karain (NEW STYLE)
+        # Ab hum yahan video path nahi detay, sirf config detay hain
+        preprocessor = PreprocessingComponent(config=pre_config)
+        
+        # 4. Component ko run karain (NEW STYLE)
+        # Video path ab yahan pass hoga
+        logger.info("Running extraction...")
+        audio_path = preprocessor.run(dummy_video_path)
+        
+        # 5. Results check karain
+        logger.info(f"Input Video: {dummy_video_path}")
+        logger.info(f"Output Audio: {audio_path}")
+        
+        if audio_path and os.path.exists(audio_path):
+            logger.info("✅ SUCCESS: Audio file was created successfully.")
+        else:
+            logger.error("❌ FAILURE: Audio file was NOT created.")
+            
+        logger.info("--- Finished Preprocessing Component Test ---")
+
+    except Exception as e:
+        logger.error(f"Preprocessing test FAILED: {e}")
+        import traceback
+        traceback.print_exc()
 def test_cv_analyzer():
     """
     Tests the CVAnalyzerComponent.
@@ -150,6 +197,67 @@ def test_cv_analyzer():
         logger.error(f"CV Analyzer test FAILED: {e}")
         logger.exception(e)
 
+def test_cv_analyzer1():
+    """
+    Tests the CVAnalyzerComponent using dynamic paths from config.
+    """
+    logger.info("--- Starting CV Analyzer Component Test ---")
+    
+    try:
+        # 1. Configs Load karain
+        config_manager = ConfigurationManager()
+        
+        # Hum Preprocessing config is liye mangwa rahay hain taakay 
+        # 'temp_video_path' wala folder mil jaye jahan video rakhi hai.
+        pre_config = config_manager.get_preprocessing_config()
+        
+        # CV ki apni config (Analyzer ke liye)
+        cv_config = config_manager.get_cv_config()
+        
+        # 2. Dynamic Path Logic (Aapki batayi hui logic)
+        video_filename = "samplev14.mp4"
+        
+        # Folder path Config se + File name
+        video_path = os.path.join(pre_config.temp_video_path, video_filename)
+        
+        # Check karain kay file mojood hai
+        if not os.path.exists(video_path):
+            logger.warning(f"Test file not found at: {video_path}")
+            logger.warning(f"Please place '{video_filename}' inside '{pre_config.temp_video_path}' folder.")
+            return
+
+        logger.info(f"✅ Found video file at: {video_path}")
+
+        # 3. Component Initialize (Sirf CV Config ke sath)
+        cv_analyzer = CVAnalyzerComponent(config=cv_config)
+
+        # 4. Run Analysis (Video path ab yahan pass hoga)
+        logger.info("Running CV Analysis... (This may take time)")
+        results = cv_analyzer.run(video_path)
+
+        # 5. Results Verify karain
+        if results:
+            logger.info("✅ SUCCESS: Analysis completed successfully.")
+            
+            # Key Metrics Print karain
+            print(results)
+            score = results.get('cv_score')
+            mood = results.get('facial_expression', {}).get('dominant_mood')
+            eye_contact = results.get('eye_gaze', {}).get('eye_contact_percentage')
+            
+            logger.info(f"   > CV Score: {score}/100")
+            logger.info(f"   > Dominant Mood: {mood}")
+            logger.info(f"   > Eye Contact: {eye_contact}%")
+        else:
+            logger.error("❌ FAILURE: Analysis returned empty results.")
+
+        logger.info("--- Finished CV Analyzer Component Test ---")
+
+    except Exception as e:
+        logger.error(f"CV Analyzer test FAILED: {e}")
+        import traceback
+        traceback.print_exc()
+
 def test_nlp_analyzer():
     """
     Tests the NLPAnalyzerComponent.
@@ -192,6 +300,68 @@ def test_nlp_analyzer():
     except Exception as e:
         logger.error(f"NLP Analyzer test FAILED: {e}")
         logger.exception(e)
+
+def test_nlp_analyzer1():
+    """
+    Tests the NLPAnalyzerComponent using the audio generated from Preprocessing test.
+    """
+    logger.info("--- Starting NLP Analyzer Component Test ---")
+    
+    try:
+        # 1. Configs Load karain
+        config_manager = ConfigurationManager()
+        
+        # Preprocessing Config is liye chahiye taakay humein pata chalay 
+        # ke audio file kahan save hui thi.
+        pre_config = config_manager.get_preprocessing_config()
+        nlp_config = config_manager.get_nlp_config()
+        
+        # 2. Dynamic Audio Path Construction
+        # Ye file 'test_preprocessing.py' chalane se banti hai
+        audio_filename = "samplec.mp3"
+        audio_path = os.path.join(pre_config.temp_video_path, audio_filename)
+        
+        # Check if audio file exists
+        if not os.path.exists(audio_path):
+            logger.error(f"Test audio file not found at: {audio_path}")
+            logger.info("Please run 'python test_preprocessing.py' first to generate this audio file.")
+            return
+
+        logger.info(f"Found audio file at: {audio_path}")
+
+        # 3. Component Initialize
+        # Sirf config pass kar rahay hain (Models load honge)
+        logger.info("Initializing NLP Component (Loading Models)...")
+        nlp_analyzer = NLPAnalyzerComponent(config=nlp_config)
+
+        # 4. Run Analysis
+        # Audio path yahan pass hoga
+        logger.info("Running NLP Analysis... (This may take time for Transcription)")
+        results = nlp_analyzer.run(audio_path)
+
+        # 5. Verify Results
+        if results:
+            logger.info("SUCCESS: Analysis completed successfully.")
+            
+            # Key Metrics
+            print(results)
+            score = results.get("phase1_quality_score")
+            wpm = results.get("speech_metrics", {}).get("speech_rate_wpm")
+            transcript = results.get("transcript", "")[:100] # First 100 chars
+            
+            logger.info(f"   > NLP Score: {score}/100")
+            logger.info(f"   > WPM: {wpm}")
+            logger.info(f"   > Transcript Start: \"{transcript}...\"")
+            
+        else:
+            logger.error("FAILURE: Analysis returned empty results.")
+
+        logger.info("--- Finished NLP Analyzer Component Test ---")
+
+    except Exception as e:
+        logger.error(f"NLP Analyzer test FAILED: {e}")
+        import traceback
+        traceback.print_exc()
 
 def test_report_generator():
     """
@@ -563,28 +733,29 @@ def run_pipeline_integration_test():
     print("STARTING ANALYSIS PIPELINE INTEGRATION TEST")
     print("="*50)
 
-    # --- CONFIGURATION ---
-    # ⚠️ Yahan apni kisi bhi real MP4 video ka path dein
-    # Agar file nahi mili to test ruk jayega.
-    VIDEO_PATH = "artifacts/data_ingestion/test_video.mp4" 
-    
-    TEST_SESSION_ID = "pipeline_final_test_session_01"
-    TEST_QUESTION_ID = "Q1_Test"
-
-    # --- STEP 1: CHECK FILE EXISTENCE ---
-    if not os.path.exists(VIDEO_PATH):
-        logger.error(f"[ERROR] Test Video not found at: {VIDEO_PATH}")
-        logger.info("Please place a video file there or update VIDEO_PATH in the script.")
-        return
-
     try:
-        # --- STEP 2: INITIALIZE PIPELINE ---
-        logger.info("[INIT] Initializing Analysis Pipeline...")
+        # --- 1. SETUP VIDEO PATH VIA CONFIG ---
+        config_manager = ConfigurationManager()
+        pre_config = config_manager.get_preprocessing_config()
+        
+        # Wahi logic jo aapne Preprocessing test mai use ki
+        video_filename = "samplev14.mp4" 
+        VIDEO_PATH = os.path.join(pre_config.temp_video_path, video_filename)
+
+        if not os.path.exists(VIDEO_PATH):
+            logger.error(f"Test video not found at: {VIDEO_PATH}")
+            return
+
+        # --- 2. DEFINE SESSION INFO ---
+        TEST_SESSION_ID = "pipeline_final_test_session_v2"
+        TEST_QUESTION_ID = "Q1_Final_Test"
+
+        # --- 3. INITIALIZE PIPELINE ---
+        logger.info("Initializing Analysis Pipeline...")
         pipeline = AnalysisPipeline()
 
-        # --- STEP 3: RUN PIPELINE ---
+        # --- 4. RUN PIPELINE ---
         print(f"\n[PROCESSING] Processing Video: {VIDEO_PATH}...")
-        print(f"Session ID: {TEST_SESSION_ID} | Question ID: {TEST_QUESTION_ID}")
         
         success = pipeline.run_pipeline(
             session_id=TEST_SESSION_ID,
@@ -592,46 +763,41 @@ def run_pipeline_integration_test():
             video_path=VIDEO_PATH
         )
 
-        # --- STEP 4: VERIFY IN DATABASE ---
+        # --- 5. VERIFY IN DATABASE ---
         if success:
             print("\n" + "-"*30)
-            print("[VERIFICATION] Pipeline returned Success. Checking Database...")
+            print("VERIFYING DATABASE ENTRY")
+            print("-" * 30)
             
-            # DB Connector alag se banayen taakay check kar sakein
-            config = ConfigurationManager()
-            db = DatabaseConnector(config.get_database_config())
-            
-            # Fetch specifically this chunk
-            # (Assuming get_all_chunks returns a list, we filter or just get all)
+            # Check DB specifically for this chunk
+            db = DatabaseConnector(config_manager.get_database_config())
             chunks = db.get_all_chunks(TEST_SESSION_ID)
             
-            target_chunk = None
+            found = False
             for chunk in chunks:
                 if chunk['question_id'] == TEST_QUESTION_ID:
-                    target_chunk = chunk
+                    print("SUCCESS: Data found in Database!")
+                    print(f"   > NLP Score: {chunk.get('phase1_score')}")
+                    print(f"   > CV Score: {chunk.get('cv_score')}")
+                    found = True
                     break
             
-            if target_chunk:
-                print("\n✅ TEST PASSED: Data found in Database!")
-                print(f"   > NLP Score: {target_chunk.get('phase1_score')}")
-                print(f"   > CV Score: {target_chunk.get('cv_score')}")
-                print(f"   > Transcript: {str(target_chunk.get('transcript'))[:50]}...")
-            else:
-                print("\n❌ TEST FAILED: Pipeline said success, but Data NOT found in DB.")
+            if not found:
+                print("FAILURE: Pipeline succeeded but Data NOT found in DB.")
         else:
-            print("\n❌ TEST FAILED: Pipeline execution returned False.")
+            print("FAILURE: Pipeline execution returned False.")
 
     except Exception as e:
-        logger.error(f"[CRASH] Test script failed: {e}")
+        logger.error(f"Test script failed: {e}")
         import traceback
         traceback.print_exc()
 
 
 if __name__ == "__main__":
     #test_configuration()
-    #test_preprocessing()
-    #test_cv_analyzer()
-    #test_nlp_analyzer()
+    #test_preprocessing1()
+    #test_cv_analyzer1()
+    test_nlp_analyzer1()
     #test_report_generator()
     #test_full_analysis_pipeline()
     #init_database()
@@ -640,4 +806,5 @@ if __name__ == "__main__":
     #run_db_aggregator_test()
     #run_generation()
     #run_saving_final_report()
+    #run_pipeline_integration_test()
     

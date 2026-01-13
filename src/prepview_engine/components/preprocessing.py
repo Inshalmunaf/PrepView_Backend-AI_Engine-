@@ -1,72 +1,66 @@
 import os
 from pathlib import Path
 from prepview_engine.utils.common import logger
-from prepview_engine.config.configuration import PreprocessingConfig
+from prepview_engine.config.configuration import PreprocessingConfig # Ensure this import exists
 from moviepy import VideoFileClip
 
 class PreprocessingComponent:
-    def __init__(self, original_video_path: str, config: PreprocessingConfig):
+    def __init__(self, config: PreprocessingConfig):
         """
-        Initializes the preprocessing component.
-        
-        Args:
-            original_video_path (str): The path to the uploaded video file.
-            config (PreprocessingConfig): The configuration object for preprocessing.
+        Initializes the component with configuration ONLY.
+        Video path will be passed later during execution.
         """
-        self.original_video_path = Path(original_video_path)
         self.config = config
-        
-        # Ensure the paths are valid
-        if not self.original_video_path.exists():
-            logger.error(f"Original video file not found at: {original_video_path}")
-            raise FileNotFoundError(f"Original video file not found at: {original_video_path}")
-            
-        logger.info(f"PreprocessingComponent initialized for video: {self.original_video_path.name}")
+        logger.info("✅ PreprocessingComponent Initialized.")
 
-    def extract_audio(self) -> Path:
+    def extract_audio(self, video_path: Path) -> Path:
         """
         Extracts audio from the video file and saves it as a .wav file.
-        
-        Returns:
-            Path: The path to the saved audio file.
         """
         try:
-            video_name = self.original_video_path.stem # File ka naam bina extension
-            # Audio file ko usi temp folder mai save karain gay
+            video_name = video_path.stem  # File name without extension
+            
+            # Ensure temp directory exists
+            os.makedirs(self.config.temp_video_path, exist_ok=True)
+            
+            # Define output audio path
             audio_file_name = f"{video_name}_audio.wav"
-            audio_file_path = self.config.temp_video_path / audio_file_name
+            audio_file_path = Path(self.config.temp_video_path) / audio_file_name
             
-            logger.info(f"Starting audio extraction for: {self.original_video_path.name}")
+            logger.info(f"🔉 Starting audio extraction for: {video_path.name}")
             
-            # Load the video file
-            video_clip = VideoFileClip(str(self.original_video_path))
+            # Load Video & Write Audio
+            # Note: Putting inside 'with' block ensures it closes automatically
+            with VideoFileClip(str(video_path)) as video_clip:
+                video_clip.audio.write_audiofile(str(audio_file_path), codec='pcm_s16le', logger=None)
             
-            # Write the audio file
-            video_clip.audio.write_audiofile(str(audio_file_path), codec='pcm_s16le', logger=None)
-            
-            video_clip.close()
-            
-            logger.info(f"Audio extracted successfully and saved to: {audio_file_path}")
+            logger.info(f"✅ Audio saved to: {audio_file_path}")
             return audio_file_path
             
         except Exception as e:
-            logger.error(f"Error during audio extraction: {e}")
-            raise
+            logger.error(f"❌ Error during audio extraction: {e}")
+            raise e
 
-    def run(self) -> (Path, Path):
+    def run(self, video_path_str: str) -> Path:
         """
-        Runs the full preprocessing step.
+        Runs the full preprocessing step on a specific video.
         
+        Args:
+            video_path_str (str): Path to the input video.
+            
         Returns:
-            tuple (Path, Path): (path_to_video, path_to_extracted_audio)
+            Path: The path to the extracted audio file.
         """
-        logger.info("--- Starting Preprocessing Component ---")
+        video_path = Path(video_path_str)
+        
+        # Validation
+        if not video_path.exists():
+            raise FileNotFoundError(f"Original video file not found at: {video_path}")
+
+        logger.info(f"--- Processing Video: {video_path.name} ---")
         
         # 1. Extract Audio
-        audio_path = self.extract_audio()
+        audio_path = self.extract_audio(video_path)
         
-        # 2. Return paths for next components
-        video_path = self.original_video_path
-        
-        logger.info("--- Finished Preprocessing Component ---")
-        return video_path, audio_path
+        # Return only audio path (Video path caller ke paas already hai)
+        return audio_path

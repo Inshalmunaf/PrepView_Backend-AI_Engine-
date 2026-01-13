@@ -2,36 +2,22 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import math
+import os
 from pathlib import Path
 from collections import deque, Counter
 from prepview_engine.utils.common import logger
 from prepview_engine.config.configuration import CVConfig
 
 class CVAnalyzerComponent:
-    def __init__(self, video_path: Path, config: CVConfig):
+    def __init__(self, config: CVConfig):
         """
-        Initializes the CV Analyzer component.
-        
-        Args:
-            video_path (Path): The path to the video file to be analyzed.
-            config (CVConfig): Configuration object containing parameters from params.yaml.
+        Initializes the CV Analyzer component with Configuration ONLY.
+        Video path is now passed during the 'run' method.
         """
         self.config = config
-        self.video_path = str(video_path)
-        self.cap = cv2.VideoCapture(self.video_path)
         
-        if not self.cap.isOpened():
-            logger.error(f"Failed to open video file: {self.video_path}")
-            raise IOError(f"Failed to open video file: {self.video_path}")
-
         # MediaPipe models initialization
         self.mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = self.mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=self.config.min_detection_confidence,
-            min_tracking_confidence=self.config.min_tracking_confidence
-        )
         
         # Initialize thresholds (will be set during calibration)
         self.THRESH_LIP_THICKNESS = 0.0
@@ -42,7 +28,10 @@ class CVAnalyzerComponent:
         self.THRESH_HAPPY = self.config.expr_thresh_happy
         self.THRESH_SURPRISE = self.config.expr_thresh_surprise
         
-        logger.info(f"CVAnalyzerComponent initialized for video: {video_path.name}")
+        # Variable to hold current processing video path
+        self.video_path = None
+        
+        logger.info("CVAnalyzerComponent Initialized.")
 
     # ==========================================================
     # 🧩 HELPER MODULES FOR EXPRESSION
@@ -471,19 +460,30 @@ class CVAnalyzerComponent:
         )
 
         return round(final_score_0_1 * 100, 1)
-   
+    
 
     # ==========================================================
     # MAIN RUN (Aggregator)
     # ==========================================================
-    def run(self) -> dict:
-        """Runs the full CV analysis pipeline."""
-        logger.info("--- Starting CV Analysis Component ---")
+    def run(self, video_path_str: str) -> dict:
+        """
+        Runs the full CV analysis pipeline on the given video.
+        
+        Args:
+            video_path_str (str): Path to the video file.
+        """
+        self.video_path = str(video_path_str) # Set path for this run
+        
+        if not os.path.exists(self.video_path):
+            logger.error(f"Video file not found: {self.video_path}")
+            return {}
+            
+        logger.info(f"--- Starting CV Analysis for: {Path(self.video_path).name} ---")
         
         head_data = self._analyze_head_movement()
         eye_data = self._analyze_eye_gaze()
         expr_data = self._analyze_expressions()
-        cv_score = self.nonverbal_score(expr_data,eye_data,head_data)
+        cv_score = self.nonverbal_score(expr_data, eye_data, head_data)
         
         logger.info("--- Finished CV Analysis Component ---")
         return {
